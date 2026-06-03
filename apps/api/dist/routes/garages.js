@@ -10,13 +10,45 @@ async function requireAuth(req, reply) {
         return null;
     }
 }
-const scheduleSchema = z.object({
+const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
+const WORKDAYS = [1, 2, 3, 4, 5];
+function parseTimeToMinutes(value, fallbackHour) {
+    if (typeof value === "string" && /^\d{2}:\d{2}$/.test(value)) {
+        const [h, m] = value.split(":").map(Number);
+        if (h >= 0 && h <= 24 && m >= 0 && m <= 59 && !(h === 24 && m > 0))
+            return h * 60 + m;
+    }
+    return fallbackHour * 60;
+}
+const scheduleSchema = z
+    .object({
     workSchedule: z.string().trim().max(200).optional().default("По записи"),
     daysAhead: z.coerce.number().int().min(1).max(60).default(14),
-    startHour: z.coerce.number().int().min(0).max(23).default(10),
-    endHour: z.coerce.number().int().min(1).max(24).default(18),
+    startHour: z.coerce.number().int().min(0).max(23).optional(),
+    endHour: z.coerce.number().int().min(1).max(24).optional(),
+    startTime: z.string().regex(/^\d{2}:\d{2}$/).optional().default("10:00"),
+    endTime: z.string().regex(/^\d{2}:\d{2}$/).optional().default("18:00"),
     slotDurationMin: z.coerce.number().int().min(30).max(240).default(60),
+    daysMode: z.enum(["weekdays", "daily", "custom"]).optional().default("weekdays"),
+    weekdays: z.array(z.coerce.number().int().min(0).max(6)).max(7).optional().default(WORKDAYS),
+})
+    .superRefine((value, ctx) => {
+    const start = parseTimeToMinutes(value.startTime, value.startHour ?? 10);
+    const end = parseTimeToMinutes(value.endTime, value.endHour ?? 18);
+    if (end <= start) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Время окончания должно быть больше времени начала", path: ["endTime"] });
+    }
+    if (value.daysMode === "custom" && (!value.weekdays || value.weekdays.length === 0)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Выбери хотя бы один рабочий день", path: ["weekdays"] });
+    }
 });
+function selectedWeekdays(daysMode, weekdays) {
+    if (daysMode === "daily")
+        return WEEKDAYS;
+    if (daysMode === "weekdays")
+        return WORKDAYS;
+    return Array.from(new Set((weekdays ?? []).map(Number).filter((d) => d >= 0 && d <= 6)));
+}
 const masterGarageSchema = z.object({
     title: z.string().trim().min(3, "Название должно быть не короче 3 символов"),
     address: z.string().trim().min(5, "Укажи адрес"),
@@ -34,7 +66,7 @@ const masterGarageSchema = z.object({
         durationMin: z.coerce.number().int().min(15).max(480).optional(),
     }))
         .min(1, "Добавь хотя бы одну услугу"),
-    schedule: scheduleSchema.default({ daysAhead: 14, startHour: 10, endHour: 18, slotDurationMin: 60, workSchedule: "По записи" }),
+    schedule: scheduleSchema.default({ daysAhead: 14, startTime: "10:00", endTime: "18:00", slotDurationMin: 60, workSchedule: "По будням 10:00–18:00", daysMode: "weekdays", weekdays: WORKDAYS }),
 });
 function normalizeStartDay(ts = Date.now()) {
     const day = new Date(ts);
@@ -117,13 +149,18 @@ async function createSlots(db, garageId, opts) {
     const startDay = normalizeStartDay(Date.now());
     const existingRows = await db.all("SELECT start_at, end_at FROM availability_slots WHERE garage_id=? AND start_at >= ?", [garageId, startDay.getTime()]);
     const existing = new Set(existingRows.map((x) => `${Number(x.start_at)}-${Number(x.end_at)}`));
+    const allowedDays = new Set(selectedWeekdays(opts.daysMode ?? "weekdays", opts.weekdays));
+    const startMinutes = parseTimeToMinutes(opts.startTime, opts.startHour ?? 10);
+    const endMinutes = parseTimeToMinutes(opts.endTime, opts.endHour ?? 18);
     let slotsCreated = 0;
     for (let d = 0; d < opts.daysAhead; d++) {
         const day = new Date(startDay.getTime() + d * 24 * 60 * 60 * 1000);
+        if (!allowedDays.has(day.getDay()))
+            continue;
         const from = new Date(day);
-        from.setHours(opts.startHour, 0, 0, 0);
+        from.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
         const to = new Date(day);
-        to.setHours(opts.endHour, 0, 0, 0);
+        to.setHours(Math.floor(endMinutes / 60), endMinutes % 60, 0, 0);
         for (let cursor = from.getTime(); cursor + opts.slotDurationMin * 60 * 1000 <= to.getTime(); cursor += opts.slotDurationMin * 60 * 1000) {
             const end = cursor + opts.slotDurationMin * 60 * 1000;
             const key = `${cursor}-${end}`;
@@ -241,9 +278,6 @@ export function registerGarageRoutes(app) {
         if (auth.role !== "MASTER")
             return reply.code(403).send({ ok: false, error: "Только для мастеров" });
         const body = masterGarageSchema.parse(req.body);
-        if (body.schedule.endHour <= body.schedule.startHour) {
-            return reply.code(400).send({ ok: false, error: "Время окончания должно быть больше времени начала" });
-        }
         let resolvedLat = body.lat ?? null;
         let resolvedLng = body.lng ?? null;
         let geocodedAddress = null;
@@ -297,9 +331,6 @@ export function registerGarageRoutes(app) {
             return reply.code(403).send({ ok: false, error: "Только для мастеров" });
         const id = Number(req.params.id);
         const body = scheduleSchema.parse(req.body);
-        if (body.endHour <= body.startHour) {
-            return reply.code(400).send({ ok: false, error: "Время окончания должно быть больше времени начала" });
-        }
         const garage = await app.db.get("SELECT id FROM garages WHERE id=? AND master_user_id=?", [id, auth.sub]);
         if (!garage)
             return reply.code(404).send({ ok: false, error: "Гараж не найден" });

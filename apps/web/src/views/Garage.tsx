@@ -34,13 +34,24 @@ function isSlotBooked(slot: Slot) {
   return slot.isBooked === true || slot.isBooked === 1;
 }
 
+function toMs(value: unknown) {
+  const n = Number(value);
+  if (Number.isFinite(n)) return n;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function slotDateLabel(startAt: number) {
-  return new Date(startAt).toLocaleDateString("ru-RU", { weekday: "short", day: "2-digit", month: "short" });
+  const ms = toMs(startAt);
+  return ms ? new Date(ms).toLocaleDateString("ru-RU", { weekday: "short", day: "2-digit", month: "short" }) : "Дата";
 }
 
 function slotTimeLabel(slot: Slot) {
-  const start = new Date(slot.startAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-  const end = new Date(slot.endAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const startMs = toMs(slot.startAt);
+  const endMs = toMs(slot.endAt);
+  if (!startMs || !endMs) return "Время не указано";
+  const start = new Date(startMs).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const end = new Date(endMs).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   return `${start}–${end}`;
 }
 
@@ -301,7 +312,7 @@ export default function Garage() {
                       {r.userAvatarUrl ? <img src={r.userAvatarUrl} alt={r.userDisplayName || "Клиент"} className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/10" /> : <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-xs font-black text-zinc-200">{(r.userDisplayName || r.userEmail || "К").slice(0, 2).toUpperCase()}</div>}
                       <div>
                         <div className="text-sm font-semibold text-zinc-100">{r.userDisplayName || (r.userEmail ? r.userEmail.split("@")[0] : "Клиент")}</div>
-                        <div className="mt-1 text-xs text-zinc-500">{new Date(r.createdAt).toLocaleDateString()} {r.userCarInfo ? `• ${r.userCarInfo}` : ""}</div>
+                        <div className="mt-1 text-xs text-zinc-500">{toMs(r.createdAt) ? new Date(toMs(r.createdAt)).toLocaleDateString("ru-RU") : ""} {r.userCarInfo ? `• ${r.userCarInfo}` : ""}</div>
                       </div>
                     </div>
                     <Badge>{"★".repeat(Number(r.rating))}</Badge>

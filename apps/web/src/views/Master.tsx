@@ -34,6 +34,29 @@ type MasterGarage = {
 type NotificationItem = { id: number; type: string; title: string; text?: string; link?: string; readAt?: number | null; createdAt: number };
 
 type FormService = { serviceId: number; checked: boolean; priceFrom: string; durationMin: string };
+type ScheduleMode = "weekdays" | "daily" | "custom";
+type ScheduleDraft = {
+  workSchedule: string;
+  daysAhead: string;
+  startTime: string;
+  endTime: string;
+  slotDurationMin: string;
+  daysMode: ScheduleMode;
+  weekdays: number[];
+};
+
+const DAY_OPTIONS = [
+  { value: 1, label: "Пн" },
+  { value: 2, label: "Вт" },
+  { value: 3, label: "Ср" },
+  { value: 4, label: "Чт" },
+  { value: 5, label: "Пт" },
+  { value: 6, label: "Сб" },
+  { value: 0, label: "Вс" },
+];
+
+const WORKDAYS = [1, 2, 3, 4, 5];
+const EVERYDAY = [0, 1, 2, 3, 4, 5, 6];
 
 const defaultForm = {
   title: "",
@@ -42,13 +65,15 @@ const defaultForm = {
   phone: "",
   coverUrl: "/images/garage-lada-real.jpg",
   photoUrls: "/images/garage-lada-real.jpg\n/images/garage-lift-clean.jpg",
-  workSchedule: "Пн–Сб 10:00–19:00, по записи",
+  workSchedule: "По будням 10:00–18:00",
   lat: "",
   lng: "",
   daysAhead: "14",
-  startHour: "10",
-  endHour: "18",
+  startTime: "10:00",
+  endTime: "18:00",
   slotDurationMin: "60",
+  daysMode: "weekdays" as ScheduleMode,
+  weekdays: WORKDAYS,
 };
 
 const MAX_PHOTOS = 5;
@@ -96,16 +121,132 @@ function resizeImageFile(file: File): Promise<string> {
   });
 }
 
+function effectiveWeekdays(mode: ScheduleMode, weekdays: number[]) {
+  if (mode === "daily") return EVERYDAY;
+  if (mode === "weekdays") return WORKDAYS;
+  return weekdays.length ? weekdays : WORKDAYS;
+}
+
+function daysText(mode: ScheduleMode, weekdays: number[]) {
+  if (mode === "daily") return "каждый день";
+  if (mode === "weekdays") return "по будням";
+  const selected = effectiveWeekdays(mode, weekdays);
+  return selected.map((day) => DAY_OPTIONS.find((x) => x.value === day)?.label).filter(Boolean).join(", ") || "по выбранным дням";
+}
+
+function scheduleCaption(draft: ScheduleDraft) {
+  return `${daysText(draft.daysMode, draft.weekdays)} ${draft.startTime}–${draft.endTime}`;
+}
+
+function normalizeSchedulePatch<T extends ScheduleDraft>(base: T, patch: Partial<ScheduleDraft>): T {
+  const next = { ...base, ...patch } as T;
+  if (patch.daysMode === "daily") next.weekdays = EVERYDAY;
+  if (patch.daysMode === "weekdays") next.weekdays = WORKDAYS;
+  if (patch.daysMode === "custom" && !next.weekdays.length) next.weekdays = WORKDAYS;
+  if (!patch.workSchedule) next.workSchedule = scheduleCaption(next);
+  return next;
+}
+
+function schedulePayload(draft: ScheduleDraft) {
+  const normalized = normalizeSchedulePatch(draft, {});
+  return {
+    workSchedule: normalized.workSchedule || scheduleCaption(normalized),
+    daysAhead: Number(normalized.daysAhead || 14),
+    startTime: normalized.startTime || "10:00",
+    endTime: normalized.endTime || "18:00",
+    slotDurationMin: Number(normalized.slotDurationMin || 60),
+    daysMode: normalized.daysMode,
+    weekdays: effectiveWeekdays(normalized.daysMode, normalized.weekdays),
+  };
+}
+
+function toMs(value: unknown) {
+  const n = Number(value);
+  if (Number.isFinite(n)) return n;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function bookingTimeRange(startValue: unknown, endValue: unknown) {
+  const start = toMs(startValue);
+  const end = toMs(endValue);
+  if (!start || !end) return "Дата не указана";
+  return `${new Date(start).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })} — ${new Date(end).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function ScheduleFields({ value, onChange }: { value: ScheduleDraft; onChange: (patch: Partial<ScheduleDraft>) => void }) {
+  const selectedDays = effectiveWeekdays(value.daysMode, value.weekdays);
+  const modeButton = (mode: ScheduleMode, label: string) => (
+    <button
+      type="button"
+      onClick={() => onChange({ daysMode: mode })}
+      className={`rounded-2xl border px-4 py-2 text-sm transition ${value.daysMode === mode ? "border-amber-300/60 bg-amber-300/15 text-amber-100" : "border-white/10 bg-white/[.04] text-zinc-300 hover:border-amber-300/35"}`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="space-y-4 rounded-3xl border border-white/10 bg-white/[.04] p-4">
+      <div>
+        <div className="text-sm font-semibold text-zinc-100">Расписание записи</div>
+        <div className="mt-1 text-xs text-zinc-500">Выбери дни работы, время начала и окончания, затем сайт сам создаст слоты для записи.</div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {modeButton("weekdays", "По будням")}
+        {modeButton("daily", "Каждый день")}
+        {modeButton("custom", "Выбрать дни")}
+      </div>
+
+      {value.daysMode === "custom" ? (
+        <div className="flex flex-wrap gap-2">
+          {DAY_OPTIONS.map((day) => {
+            const active = selectedDays.includes(day.value);
+            return (
+              <button
+                key={day.value}
+                type="button"
+                onClick={() => {
+                  const current = new Set(value.weekdays);
+                  current.has(day.value) ? current.delete(day.value) : current.add(day.value);
+                  onChange({ weekdays: DAY_OPTIONS.map((x) => x.value).filter((x) => current.has(x)) });
+                }}
+                className={`h-10 min-w-10 rounded-2xl border px-3 text-sm font-semibold transition ${active ? "border-emerald-300/45 bg-emerald-300/15 text-emerald-100" : "border-white/10 bg-black/20 text-zinc-500"}`}
+              >
+                {day.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <label className="space-y-2 text-xs text-zinc-400">Создать слоты на дней вперёд<Input type="number" min="1" max="60" value={value.daysAhead} onChange={(e) => onChange({ daysAhead: e.target.value })} /></label>
+        <label className="space-y-2 text-xs text-zinc-400">Начало рабочего дня<Input type="time" value={value.startTime} onChange={(e) => onChange({ startTime: e.target.value })} /></label>
+        <label className="space-y-2 text-xs text-zinc-400">Конец рабочего дня<Input type="time" value={value.endTime} onChange={(e) => onChange({ endTime: e.target.value })} /></label>
+        <label className="space-y-2 text-xs text-zinc-400">Длительность слота, минут<Input type="number" min="30" max="240" step="15" value={value.slotDurationMin} onChange={(e) => onChange({ slotDurationMin: e.target.value })} /></label>
+      </div>
+
+      <label className="block space-y-2 text-xs text-zinc-400">
+        Подпись графика в карточке
+        <Input value={value.workSchedule} onChange={(e) => onChange({ workSchedule: e.target.value })} placeholder={scheduleCaption(value)} />
+      </label>
+    </div>
+  );
+}
+
 export default function Master() {
   const [me, setMe] = useState<any>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [myGarages, setMyGarages] = useState<MasterGarage[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [scheduleDrafts, setScheduleDrafts] = useState<Record<number, { workSchedule: string; daysAhead: string; startHour: string; endHour: string; slotDurationMin: string }>>({});
+  const [scheduleDrafts, setScheduleDrafts] = useState<Record<number, ScheduleDraft>>({});
   const [scheduleOk, setScheduleOk] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [formServices, setFormServices] = useState<FormService[]>([]);
+  const [showGarageForm, setShowGarageForm] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [formErr, setFormErr] = useState<string | null>(null);
   const [formOk, setFormOk] = useState<string | null>(null);
@@ -135,7 +276,7 @@ export default function Master() {
       setScheduleDrafts((prev) => {
         const next = { ...prev };
         for (const g of garages) {
-          if (!next[g.id]) next[g.id] = { workSchedule: g.workSchedule || "По записи", daysAhead: "14", startHour: "10", endHour: "18", slotDurationMin: "60" };
+          if (!next[g.id]) next[g.id] = { workSchedule: g.workSchedule || "По будням 10:00–18:00", daysAhead: "14", startTime: "10:00", endTime: "18:00", slotDurationMin: "60", daysMode: "weekdays", weekdays: WORKDAYS };
         }
         return next;
       });
@@ -228,6 +369,8 @@ export default function Master() {
 
     if (selectedServices.length === 0) return setFormErr("Выбери хотя бы одну услугу.");
 
+    const schedule = schedulePayload(form);
+
     setSaving(true);
     try {
       const r = await fetch("/api/master/garages", {
@@ -240,16 +383,11 @@ export default function Master() {
           phone: form.phone,
           coverUrl: form.coverUrl,
           photoUrls: photos,
-          workSchedule: form.workSchedule,
+          workSchedule: schedule.workSchedule,
           lat: form.lat ? Number(form.lat) : undefined,
           lng: form.lng ? Number(form.lng) : undefined,
           services: selectedServices,
-          schedule: {
-            daysAhead: Number(form.daysAhead || 14),
-            startHour: Number(form.startHour || 10),
-            endHour: Number(form.endHour || 18),
-            slotDurationMin: Number(form.slotDurationMin || 60),
-          },
+          schedule,
         }),
       });
       const j = await r.json();
@@ -257,6 +395,7 @@ export default function Master() {
       const geoText = j.geocodedAddress ? " Координаты автоматически определены по адресу." : "";
       setFormOk(`Гараж создан. Слотов добавлено: ${j.slotsCreated}. После модерации он появится в каталоге.${geoText}`);
       setForm(defaultForm);
+      setShowGarageForm(false);
       setFormServices((prev) => prev.map((x) => ({ ...x, checked: false, priceFrom: "", durationMin: "60" })));
       await load();
     } finally {
@@ -268,10 +407,10 @@ export default function Master() {
     setFormServices((prev) => prev.map((item) => (item.serviceId === id ? { ...item, ...patch } : item)));
   }
 
-  function updateScheduleDraft(id: number, patch: Partial<{ workSchedule: string; daysAhead: string; startHour: string; endHour: string; slotDurationMin: string }>) {
+  function updateScheduleDraft(id: number, patch: Partial<ScheduleDraft>) {
     setScheduleDrafts((prev) => ({
       ...prev,
-      [id]: { ...(prev[id] ?? { workSchedule: "По записи", daysAhead: "14", startHour: "10", endHour: "18", slotDurationMin: "60" }), ...patch },
+      [id]: normalizeSchedulePatch(prev[id] ?? { workSchedule: "По будням 10:00–18:00", daysAhead: "14", startTime: "10:00", endTime: "18:00", slotDurationMin: "60", daysMode: "weekdays", weekdays: WORKDAYS }, patch),
     }));
   }
 
@@ -280,16 +419,11 @@ export default function Master() {
     setScheduleOk(null);
     const draft = scheduleDrafts[id];
     if (!draft) return;
+    const schedule = schedulePayload(draft);
     const r = await fetch(`/api/master/garages/${id}/schedule`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        workSchedule: draft.workSchedule,
-        daysAhead: Number(draft.daysAhead || 14),
-        startHour: Number(draft.startHour || 10),
-        endHour: Number(draft.endHour || 18),
-        slotDurationMin: Number(draft.slotDurationMin || 60),
-      }),
+      body: JSON.stringify(schedule),
     });
     const j = await r.json();
     if (!j.ok) return setErr(j.error ?? "Не удалось обновить расписание");
@@ -343,10 +477,21 @@ export default function Master() {
       {me?.role === "MASTER" && (
         <>
           <Card>
+            <CardBody className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-xl font-semibold text-zinc-50">Гаражи</div>
+                <div className="mt-1 text-sm text-zinc-500">Форма добавления спрятана, чтобы заявки были под рукой.</div>
+              </div>
+              <Button type="button" onClick={() => setShowGarageForm((v) => !v)}>{showGarageForm ? "Скрыть форму" : "+ Добавить гараж"}</Button>
+            </CardBody>
+          </Card>
+
+          {showGarageForm ? (
+          <Card>
             <CardBody className="space-y-5">
               <div>
-                <div className="text-xl font-semibold text-zinc-50">Создать гараж</div>
-                <div className="mt-1 text-sm text-zinc-500">Заполни данные мастерской, услуги, цены, фотографии и график работы.</div>
+                <div className="text-xl font-semibold text-zinc-50">Добавить гараж</div>
+                <div className="mt-1 text-sm text-zinc-500">Заполни данные мастерской, услуги, цены, фотографии и понятное расписание.</div>
               </div>
 
               <form className="space-y-5" onSubmit={createGarage}>
@@ -419,17 +564,44 @@ export default function Master() {
                   ))}
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-4">
-                  <label className="space-y-2 text-xs text-zinc-400">Дней вперёд<Input type="number" min="1" max="60" value={form.daysAhead} onChange={(e) => setForm((p) => ({ ...p, daysAhead: e.target.value }))} /></label>
-                  <label className="space-y-2 text-xs text-zinc-400">Начало<Input type="number" min="0" max="23" value={form.startHour} onChange={(e) => setForm((p) => ({ ...p, startHour: e.target.value }))} /></label>
-                  <label className="space-y-2 text-xs text-zinc-400">Конец<Input type="number" min="1" max="24" value={form.endHour} onChange={(e) => setForm((p) => ({ ...p, endHour: e.target.value }))} /></label>
-                  <label className="space-y-2 text-xs text-zinc-400">Слот, мин<Input type="number" min="30" step="15" max="240" value={form.slotDurationMin} onChange={(e) => setForm((p) => ({ ...p, slotDurationMin: e.target.value }))} /></label>
-                </div>
+                <ScheduleFields value={form} onChange={(patch) => setForm((p) => normalizeSchedulePatch(p, patch))} />
 
                 {formErr && <div className="rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200">{formErr}</div>}
                 {formOk && <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-200">{formOk}</div>}
                 <Button type="submit" disabled={saving || uploadingPhotos}>{saving ? "Сохраняю..." : "Создать гараж"}</Button>
               </form>
+            </CardBody>
+          </Card>
+          ) : null}
+
+          <Card>
+            <CardBody className="space-y-3">
+              <div className="text-xl font-semibold text-zinc-50">Заявки</div>
+              {bookings.length === 0 ? <div className="text-sm text-zinc-500">Пока нет заявок.</div> : (
+                <div className="space-y-2">
+                  {bookings.map((b) => (
+                    <div key={b.id} className="rounded-3xl border border-white/10 bg-white/[.04] px-4 py-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm text-zinc-100">#{b.id} • {b.serviceName}</div>
+                          <div className="text-xs text-zinc-500">{bookingTimeRange(b.slotStart, b.slotEnd)}</div>
+                          <div className="text-xs text-zinc-500">{b.garageTitle} • {b.garageAddress}</div>
+                          <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
+                            {b.userAvatarUrl ? <img src={b.userAvatarUrl} alt={b.userDisplayName || b.userEmail || "Клиент"} className="h-7 w-7 rounded-xl object-cover ring-1 ring-white/10" /> : null}
+                            <span>Клиент: {b.userDisplayName || b.userEmail || "—"} {b.userPhone ? `• ${b.userPhone}` : ""} {b.userCarInfo ? `• ${b.userCarInfo}` : ""}</span>
+                          </div>
+                        </div>
+                        <Badge>{b.status}</Badge>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button onClick={() => setStatus(b.id, "CONFIRMED")} disabled={b.status !== "NEW"}>Подтвердить</Button>
+                        <Button className="bg-white/10 text-zinc-50 shadow-none" onClick={() => setStatus(b.id, "CANCELLED")} disabled={b.status === "CANCELLED" || b.status === "DONE"}>Отменить</Button>
+                        <Button className="bg-white/10 text-zinc-50 shadow-none" onClick={() => setStatus(b.id, "DONE")} disabled={b.status !== "CONFIRMED"}>Завершить</Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardBody>
           </Card>
 
@@ -456,14 +628,7 @@ export default function Master() {
                           {rejected ? <div className="rounded-2xl border border-red-400/15 bg-red-400/10 px-3 py-2 text-xs leading-5 text-red-100"><span className="font-semibold">Причина отказа:</span> {g.moderationReason}</div> : null}
 
                           <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[.04] p-3">
-                            <div className="text-sm font-semibold text-zinc-100">Редактировать расписание</div>
-                            <Input value={scheduleDrafts[g.id]?.workSchedule ?? g.workSchedule ?? "По записи"} onChange={(e) => updateScheduleDraft(g.id, { workSchedule: e.target.value })} placeholder="Пн–Сб 10:00–19:00" />
-                            <div className="grid gap-2 sm:grid-cols-4">
-                              <Input type="number" min="1" max="60" value={scheduleDrafts[g.id]?.daysAhead ?? "14"} onChange={(e) => updateScheduleDraft(g.id, { daysAhead: e.target.value })} title="Дней вперёд" />
-                              <Input type="number" min="0" max="23" value={scheduleDrafts[g.id]?.startHour ?? "10"} onChange={(e) => updateScheduleDraft(g.id, { startHour: e.target.value })} title="Начало" />
-                              <Input type="number" min="1" max="24" value={scheduleDrafts[g.id]?.endHour ?? "18"} onChange={(e) => updateScheduleDraft(g.id, { endHour: e.target.value })} title="Конец" />
-                              <Input type="number" min="30" max="240" step="15" value={scheduleDrafts[g.id]?.slotDurationMin ?? "60"} onChange={(e) => updateScheduleDraft(g.id, { slotDurationMin: e.target.value })} title="Слот, мин" />
-                            </div>
+                            <ScheduleFields value={scheduleDrafts[g.id] ?? { workSchedule: g.workSchedule || "По будням 10:00–18:00", daysAhead: "14", startTime: "10:00", endTime: "18:00", slotDurationMin: "60", daysMode: "weekdays", weekdays: WORKDAYS }} onChange={(patch) => updateScheduleDraft(g.id, patch)} />
                             <Button type="button" className="bg-white/10 text-zinc-50 shadow-none" onClick={() => saveSchedule(g.id)}>Сохранить расписание</Button>
                           </div>
                         </div>
@@ -475,36 +640,7 @@ export default function Master() {
             </CardBody>
           </Card>
 
-          <Card>
-            <CardBody className="space-y-3">
-              <div className="text-xl font-semibold text-zinc-50">Заявки</div>
-              {bookings.length === 0 ? <div className="text-sm text-zinc-500">Пока нет заявок.</div> : (
-                <div className="space-y-2">
-                  {bookings.map((b) => (
-                    <div key={b.id} className="rounded-3xl border border-white/10 bg-white/[.04] px-4 py-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm text-zinc-100">#{b.id} • {b.serviceName}</div>
-                          <div className="text-xs text-zinc-500">{new Date(b.slotStart).toLocaleString()} — {new Date(b.slotEnd).toLocaleTimeString()}</div>
-                          <div className="text-xs text-zinc-500">{b.garageTitle} • {b.garageAddress}</div>
-                          <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
-                            {b.userAvatarUrl ? <img src={b.userAvatarUrl} alt={b.userDisplayName || b.userEmail || "Клиент"} className="h-7 w-7 rounded-xl object-cover ring-1 ring-white/10" /> : null}
-                            <span>Клиент: {b.userDisplayName || b.userEmail || "—"} {b.userPhone ? `• ${b.userPhone}` : ""} {b.userCarInfo ? `• ${b.userCarInfo}` : ""}</span>
-                          </div>
-                        </div>
-                        <Badge>{b.status}</Badge>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Button onClick={() => setStatus(b.id, "CONFIRMED")} disabled={b.status !== "NEW"}>Подтвердить</Button>
-                        <Button className="bg-white/10 text-zinc-50 shadow-none" onClick={() => setStatus(b.id, "CANCELLED")} disabled={b.status === "CANCELLED" || b.status === "DONE"}>Отменить</Button>
-                        <Button className="bg-white/10 text-zinc-50 shadow-none" onClick={() => setStatus(b.id, "DONE")} disabled={b.status !== "CONFIRMED"}>Завершить</Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardBody>
-          </Card>
+
         </>
       )}
     </div>

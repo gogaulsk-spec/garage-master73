@@ -41,6 +41,30 @@ function initials(value?: string) {
   return clean.slice(0, 2).toUpperCase();
 }
 
+function toMs(value: unknown) {
+  const n = Number(value);
+  if (Number.isFinite(n)) return n;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatDate(value: unknown) {
+  const ms = toMs(value);
+  return ms ? new Date(ms).toLocaleDateString("ru-RU") : "Дата не указана";
+}
+
+function formatDateTime(value: unknown) {
+  const ms = toMs(value);
+  return ms ? new Date(ms).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "Дата не указана";
+}
+
+function formatBookingRange(startValue: unknown, endValue: unknown) {
+  const start = toMs(startValue);
+  const end = toMs(endValue);
+  if (!start || !end) return "Дата не указана";
+  return `${new Date(start).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })} — ${new Date(end).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 function resizeAvatarFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith("image/")) return reject(new Error("Выбери изображение для аватарки."));
@@ -353,7 +377,7 @@ export default function Me() {
                     return (
                       <div key={p.bookingId} className="rounded-2xl border border-white/10 bg-white/[.04] p-3">
                         <div className="text-sm font-semibold text-zinc-100">#{p.bookingId} • {p.serviceName}</div>
-                        <div className="mt-1 text-xs text-zinc-500">{p.garageTitle} • {new Date(p.slotStart).toLocaleString()}</div>
+                        <div className="mt-1 text-xs text-zinc-500">{p.garageTitle} • {formatDateTime(p.slotStart)}</div>
                         <div className="mt-3 grid gap-2 sm:grid-cols-[110px_1fr_auto]">
                           <Input type="number" min="1" max="5" value={draft.rating} onChange={(e) => setReviewDraft(p.bookingId, { rating: e.target.value })} />
                           <Textarea value={draft.text} onChange={(e) => setReviewDraft(p.bookingId, { text: e.target.value })} placeholder="Напиши, как прошёл ремонт" />
@@ -377,7 +401,7 @@ export default function Me() {
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <div className="text-sm font-semibold text-zinc-100">{r.garageTitle}</div>
-                          <div className="mt-1 text-xs text-zinc-500">#{r.bookingId} • {r.serviceName} • {new Date(r.createdAt).toLocaleDateString()}</div>
+                          <div className="mt-1 text-xs text-zinc-500">#{r.bookingId} • {r.serviceName} • {formatDate(r.createdAt)}</div>
                         </div>
                         <Badge>{"★".repeat(Number(r.rating))}</Badge>
                       </div>
@@ -416,7 +440,7 @@ function Notification({ item }: { item: NotificationItem }) {
     <div className={`rounded-2xl border px-4 py-3 ${item.readAt ? "border-white/10 bg-white/[.04]" : "border-amber-300/25 bg-amber-300/10"}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-semibold text-zinc-100">{item.title}</div>
-        <div className="text-xs text-zinc-500">{new Date(item.createdAt).toLocaleString()}</div>
+        <div className="text-xs text-zinc-500">{formatDateTime(item.createdAt)}</div>
       </div>
       {item.text ? <div className="mt-1 text-sm leading-6 text-zinc-400">{item.text}</div> : null}
       {item.link ? <Link className="mt-2 inline-flex text-xs text-amber-200 underline-offset-4 hover:underline" to={item.link}>Открыть</Link> : null}
@@ -431,7 +455,7 @@ function BookingCard({ booking, reviewDrafts, setReviewDraft, submitReview }: { 
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-zinc-100">#{booking.id} • {booking.serviceName}</div>
-          <div className="mt-1 text-xs text-zinc-500">{new Date(booking.slotStart).toLocaleString()} — {new Date(booking.slotEnd).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+          <div className="mt-1 text-xs text-zinc-500">{formatBookingRange(booking.slotStart, booking.slotEnd)}</div>
           <div className="mt-1 text-xs text-zinc-500">{booking.garageTitle} • {booking.garageAddress}</div>
         </div>
         <Badge>{statusText[booking.status] ?? booking.status}</Badge>
