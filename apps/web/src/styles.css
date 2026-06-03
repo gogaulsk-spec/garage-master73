@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+* { -webkit-tap-highlight-color: transparent; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(251, 191, 36, 0.13), transparent 34rem),
+    radial-gradient(circle at 90% 8%, rgba(239, 68, 68, 0.08), transparent 28rem),
+    linear-gradient(180deg, #080808 0%, #0b0b0d 48%, #070707 100%);
+  color: #f4f4f5;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: .17;
+  background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, black, transparent 70%);
+}
+::selection { background: rgba(251, 191, 36, .35); }
+
+.image-noise {
+  position: relative;
+}
+.image-noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 35%, rgba(0,0,0,.62));
+  pointer-events: none;
+}
+
+img, iframe { max-width: 100%; }
+iframe { border: 0; display: block; }
+input, select, textarea, button { font: inherit; }
+@media (max-width: 640px) {
+  input, select, textarea { font-size: 16px; }
+  .shadow-soft { box-shadow: none; }
+}

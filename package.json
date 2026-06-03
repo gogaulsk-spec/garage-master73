@@ -1,0 +1,21 @@
+{
+  "name": "garage-master",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n API,WEB -c auto \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm --workspace apps/api run dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "build": "npm --workspace apps/web run build && node tools/copy-web-to-api.mjs && npm --workspace apps/api run build",
+    "start": "npm --workspace apps/api run start",
+    "lint": "npm --workspace apps/web run lint && npm --workspace apps/api run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=22.14.0"
+  }
+}
