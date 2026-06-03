@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 
 type Booking = {
   id: number;
-  status: "NEW" | "CONFIRMED" | "CANCELLED" | "DONE";
+  status: "NEW" | "CONFIRMED" | "IN_PROGRESS" | "CANCELLED" | "DONE";
   slotStart: number;
   slotEnd: number;
   garageId: number;
@@ -20,12 +20,13 @@ type Booking = {
 
 type NotificationItem = { id: number; type: string; title: string; text?: string; link?: string; readAt?: number | null; createdAt: number };
 type Profile = { id?: number; role?: string; email?: string; phone?: string; displayName?: string; about?: string; avatarUrl?: string; city?: string; carInfo?: string; updatedAt?: number };
-type MyReview = { id: number; rating: number; text?: string; createdAt: number; bookingId: number; garageId: number; garageTitle: string; serviceName: string };
+type MyReview = { id: number; rating: number; text?: string; createdAt: number; replyText?: string; replyUpdatedAt?: number; bookingId: number; garageId: number; garageTitle: string; serviceName: string };
 type PendingReview = { bookingId: number; slotStart: number; slotEnd: number; garageId: number; garageTitle: string; serviceName: string };
 
 const statusText: Record<string, string> = {
   NEW: "Новая",
   CONFIRMED: "Подтверждена",
+  IN_PROGRESS: "В работе",
   CANCELLED: "Отменена",
   DONE: "Выполнена",
 };
@@ -406,6 +407,7 @@ export default function Me() {
                         <Badge>{"★".repeat(Number(r.rating))}</Badge>
                       </div>
                       {r.text ? <div className="mt-2 text-sm leading-6 text-zinc-400">{r.text}</div> : null}
+                      {r.replyText ? <div className="mt-2 rounded-2xl border border-amber-300/15 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100"><span className="font-semibold">Ответ мастера:</span> {r.replyText}</div> : null}
                       <Link className="mt-2 inline-flex text-xs text-amber-200 underline-offset-4 hover:underline" to={`/garage/${r.garageId}`}>Открыть гараж</Link>
                     </div>
                   ))}
@@ -462,7 +464,7 @@ function BookingCard({ booking, reviewDrafts, setReviewDraft, submitReview }: { 
       </div>
 
       {booking.status === "CANCELLED" ? (
-        <div className="mt-3 rounded-2xl border border-red-300/20 bg-red-300/10 px-3 py-2 text-sm text-red-100">Заявка отменена. Слот снова доступен для записи в карточке гаража.</div>
+        <div className="mt-3 rounded-2xl border border-red-300/20 bg-red-300/10 px-3 py-2 text-sm text-red-100">Заявка отменена. Это время снова доступно для записи в карточке гаража.</div>
       ) : null}
 
       {booking.status === "DONE" && booking.reviewId ? (

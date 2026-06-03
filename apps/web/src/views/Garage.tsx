@@ -23,7 +23,7 @@ type Garage = {
 
 type Service = { id: number; category: string; name: string; priceFrom?: number | null; durationMin?: number | null };
 type Slot = { id: number; startAt: number; endAt: number; isBooked: number | boolean };
-type Review = { id: number; rating: number; text?: string; createdAt: number; userEmail?: string; userDisplayName?: string; userAvatarUrl?: string; userCarInfo?: string };
+type Review = { id: number; rating: number; text?: string; createdAt: number; replyText?: string; replyUpdatedAt?: number; userEmail?: string; userDisplayName?: string; userAvatarUrl?: string; userCarInfo?: string };
 
 function readFavorites(): number[] {
   try { return JSON.parse(localStorage.getItem("gm_favorites") || "[]"); } catch { return []; }
@@ -86,7 +86,12 @@ export default function Garage() {
       const firstFreeSlot = nextSlots.find((s) => !isSlotBooked(s));
       if (!currentSlot || isSlotBooked(currentSlot)) setSlotId(firstFreeSlot ? String(firstFreeSlot.id) : "");
     }
-    setMe(auth.ok ? auth.user : null);
+    const user = auth.ok ? auth.user : null;
+    setMe(user);
+    if (user) {
+      const fav = await fetch("/api/favorites").then((r) => r.json()).catch(() => ({ ok: false }));
+      if (fav.ok) setFavorites((fav.favoriteIds ?? []).map(Number));
+    }
   }
 
   useEffect(() => { load(); }, [id]);
@@ -112,8 +117,15 @@ export default function Garage() {
   const selectedService = services.find((s) => String(s.id) === serviceId);
   const isFav = garage ? favorites.includes(garage.id) : false;
 
-  function toggleFav() {
+  async function toggleFav() {
     if (!garage) return;
+    if (me) {
+      const exists = favorites.includes(garage.id);
+      await fetch(`/api/favorites/${garage.id}`, { method: exists ? "DELETE" : "POST" });
+      const fav = await fetch("/api/favorites").then((r) => r.json()).catch(() => ({ ok: false }));
+      if (fav.ok) setFavorites((fav.favoriteIds ?? []).map(Number));
+      return;
+    }
     const set = new Set(favorites);
     set.has(garage.id) ? set.delete(garage.id) : set.add(garage.id);
     const next = [...set];
@@ -181,7 +193,7 @@ export default function Garage() {
           </Card>
 
           <Card>
-            <CardBody className="space-y-4">
+            <CardBody id="booking" className="space-y-4">
               <div className="text-lg font-semibold text-zinc-50">Онлайн-заявка</div>
               <div className="grid gap-3">
                 <Select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
@@ -302,6 +314,7 @@ export default function Garage() {
         <Card>
           <CardBody className="space-y-4">
             <SectionTitle eyebrow="Отзывы" title="Оценки клиентов" />
+            {reviews.length > 0 ? <div className="rounded-2xl border border-white/10 bg-white/[.04] p-4"><div className="text-3xl font-black text-amber-200">{Number(garage.ratingAvg).toFixed(1)}</div><div className="mt-1 text-sm text-zinc-400">на основе {garage.ratingCount} отзывов</div><div className="mt-2 text-xs text-zinc-500">Отзывы появляются только после выполненной заявки.</div></div> : null}
             <div className="space-y-3">
               {reviews.length === 0 ? (
                 <div className="rounded-2xl border border-white/10 bg-white/[.04] p-3 text-sm text-zinc-500">Пока нет отзывов. Отзывы появляются только после выполненной заявки.</div>
@@ -318,12 +331,14 @@ export default function Garage() {
                     <Badge>{"★".repeat(Number(r.rating))}</Badge>
                   </div>
                   {r.text ? <p className="mt-2 text-sm leading-6 text-zinc-400">{r.text}</p> : null}
+                  {r.replyText ? <div className="mt-3 rounded-2xl border border-amber-300/15 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100"><span className="font-semibold">Ответ мастера:</span> {r.replyText}</div> : null}
                 </div>
               ))}
             </div>
           </CardBody>
         </Card>
       </section>
+      <a href="#booking" className="fixed inset-x-4 bottom-24 z-[60] rounded-2xl bg-amber-400 px-5 py-3 text-center text-sm font-black text-zinc-950 shadow-[0_18px_45px_rgba(251,191,36,0.24)] md:hidden">Записаться</a>
     </div>
   );
 }

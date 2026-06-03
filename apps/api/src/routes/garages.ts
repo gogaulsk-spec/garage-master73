@@ -135,7 +135,7 @@ async function geocodeAddress(address: string): Promise<GeocodeResult | null> {
       signal: controller.signal,
       headers: {
         "Accept-Language": "ru",
-        "User-Agent": process.env.GEOCODE_USER_AGENT || "GarageMaster/1.0 (student demo project)",
+        "User-Agent": process.env.GEOCODE_USER_AGENT || "GarageMaster/1.0",
       },
     });
     if (!response.ok) return null;
@@ -225,6 +225,7 @@ export function registerGarageRoutes(app: FastifyInstance) {
         search: z.string().trim().optional(),
         serviceId: z.coerce.number().int().positive().optional(),
         approved: z.coerce.number().optional(),
+        onlyFree: z.coerce.number().int().min(0).max(1).optional(),
       })
       .parse((req.query ?? {}) as any);
 
@@ -249,14 +250,16 @@ export function registerGarageRoutes(app: FastifyInstance) {
         mp.rating_avg as "ratingAvg",
         mp.rating_count as "ratingCount",
         MIN(gs.price_from) as "minPrice",
-        STRING_AGG(DISTINCT s.name, ',') as "servicesList"
+        STRING_AGG(DISTINCT s.name, ',') as "servicesList",
+        COUNT(DISTINCT CASE WHEN sl.start_at >= ? AND sl.is_booked = 0 THEN sl.id END) as "futureSlotsCount"
       FROM garages g
       JOIN master_profiles mp ON mp.user_id = g.master_user_id
       LEFT JOIN garage_services gs ON gs.garage_id = g.id
       LEFT JOIN services s ON s.id = gs.service_id
+      LEFT JOIN availability_slots sl ON sl.garage_id = g.id
       WHERE 1=1
     `;
-    const params: any[] = [];
+    const params: any[] = [Date.now()];
 
     if (q.approved !== undefined) {
       sql += " AND g.is_approved = ?";
@@ -283,7 +286,10 @@ export function registerGarageRoutes(app: FastifyInstance) {
       params.push(q.serviceId);
     }
 
-    sql += " GROUP BY g.id, mp.user_id ORDER BY g.is_approved DESC, mp.rating_avg DESC, mp.rating_count DESC, g.id DESC LIMIT 100";
+    sql += " GROUP BY g.id, mp.user_id";
+    if (q.onlyFree === 1) sql += " HAVING COUNT(DISTINCT CASE WHEN sl.start_at >= " + "?" + " AND sl.is_booked = 0 THEN sl.id END) > 0";
+    if (q.onlyFree === 1) params.push(Date.now());
+    sql += " ORDER BY g.is_approved DESC, mp.rating_avg DESC, mp.rating_count DESC, g.id DESC LIMIT 100";
 
     const rows = (await app.db.all(sql, params)).map(normalizeGarageRow);
     return { ok: true, garages: rows };
@@ -314,6 +320,80 @@ export function registerGarageRoutes(app: FastifyInstance) {
     ) as any[]).map(normalizeGarageRow);
 
     return { ok: true, garages };
+  });
+
+
+  app.get("/api/master/garages/:id", async (req, reply) => {
+    const auth = await requireAuth(req, reply);
+    if (!auth) return;
+    if (auth.role !== "MASTER") return reply.code(403).send({ ok: false, error: "Только для мастеров" });
+    const id = Number((req.params as any).id);
+    const garage = normalizeGarageRow(await app.db.get(
+      `
+        SELECT id, title, address, description, phone, lat, lng,
+          cover_url as "coverUrl", photo_urls as "photoUrls", work_schedule as "workSchedule",
+          is_approved, moderation_reason as "moderationReason", moderated_at as "moderatedAt"
+        FROM garages WHERE id=? AND master_user_id=?
+      `,
+      [id, auth.sub]
+    ));
+    if (!garage) return reply.code(404).send({ ok: false, error: "Гараж не найден" });
+    const services = await app.db.all(
+      `
+        SELECT service_id as "serviceId", price_from as "priceFrom", duration_min as "durationMin"
+        FROM garage_services WHERE garage_id=?
+      `,
+      [id]
+    );
+    return { ok: true, garage, services };
+  });
+
+  app.patch("/api/master/garages/:id", async (req, reply) => {
+    const auth = await requireAuth(req, reply);
+    if (!auth) return;
+    if (auth.role !== "MASTER") return reply.code(403).send({ ok: false, error: "Только для мастеров" });
+    const id = Number((req.params as any).id);
+    const body = masterGarageSchema.omit({ schedule: true }).parse(req.body);
+    const garage = await app.db.get<any>("SELECT id, title FROM garages WHERE id=? AND master_user_id=?", [id, auth.sub]);
+    if (!garage) return reply.code(404).send({ ok: false, error: "Гараж не найден" });
+
+    let resolvedLat = body.lat ?? null;
+    let resolvedLng = body.lng ?? null;
+    if (resolvedLat === null || resolvedLng === null) {
+      const found = await geocodeAddress(body.address);
+      if (found) {
+        resolvedLat = found.lat;
+        resolvedLng = found.lng;
+      }
+    }
+
+    const existing = new Set((await app.db.all<{ id: number }>("SELECT id FROM services")).map((x) => Number(x.id)));
+    for (const item of body.services) {
+      if (!existing.has(Number(item.serviceId))) return reply.code(400).send({ ok: false, error: `Услуга #${item.serviceId} не найдена` });
+    }
+
+    await app.db.transaction(async (tx) => {
+      await tx.run(
+        `
+          UPDATE garages SET
+            title=?, address=?, lat=?, lng=?, description=?, phone=?, cover_url=?, photo_urls=?, work_schedule=?,
+            is_approved=0, moderation_reason='', moderated_at=NULL, updated_at=?
+          WHERE id=? AND master_user_id=?
+        `,
+        [body.title, body.address, resolvedLat, resolvedLng, body.description, body.phone || null, body.coverUrl || "/images/garage-lada-real.jpg", JSON.stringify(body.photoUrls?.length ? body.photoUrls : [body.coverUrl || "/images/garage-lada-real.jpg"]), body.workSchedule || "По записи", Date.now(), id, auth.sub]
+      );
+      await tx.run("DELETE FROM garage_services WHERE garage_id=?", [id]);
+      for (const item of body.services) {
+        await tx.run(
+          "INSERT INTO garage_services (garage_id, service_id, price_from, duration_min) VALUES (?, ?, ?, ?)",
+          [id, item.serviceId, item.priceFrom ?? null, item.durationMin ?? null]
+        );
+      }
+    });
+
+    const adminRows = await app.db.all<{ id: number }>("SELECT id FROM users WHERE role='ADMIN'");
+    await Promise.all(adminRows.map((admin) => createNotification(app.db, Number(admin.id), "MODERATION", "Карточка отправлена на повторную проверку", `Мастер обновил карточку «${body.title}».`, "/admin")));
+    return { ok: true };
   });
 
   app.post("/api/master/garages", async (req, reply) => {
@@ -449,11 +529,13 @@ export function registerGarageRoutes(app: FastifyInstance) {
       `
         SELECT
           r.id, r.rating, r.text, r.created_at as "createdAt",
+          rr.text as "replyText", rr.updated_at as "replyUpdatedAt",
           u.email as "userEmail",
           COALESCE(up.display_name, '') as "userDisplayName",
           COALESCE(up.avatar_url, '') as "userAvatarUrl",
           COALESCE(up.car_info, '') as "userCarInfo"
         FROM reviews r
+        LEFT JOIN review_replies rr ON rr.review_id=r.id
         JOIN users u ON u.id=r.user_id
         LEFT JOIN user_profiles up ON up.user_id=u.id
         WHERE r.garage_id=?

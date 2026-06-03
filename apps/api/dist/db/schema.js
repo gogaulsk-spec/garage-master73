@@ -77,8 +77,10 @@ export async function createSchema(db) {
       service_id INTEGER NOT NULL REFERENCES services(id),
       slot_start BIGINT NOT NULL,
       slot_end BIGINT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('NEW','CONFIRMED','CANCELLED','DONE')),
-      created_at BIGINT NOT NULL
+      status TEXT NOT NULL CHECK(status IN ('NEW','CONFIRMED','IN_PROGRESS','CANCELLED','DONE')),
+      created_at BIGINT NOT NULL,
+      status_updated_at BIGINT,
+      master_comment TEXT DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS conversations (
@@ -104,6 +106,35 @@ export async function createSchema(db) {
       rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
       text TEXT DEFAULT '',
       created_at BIGINT NOT NULL
+    );
+
+
+
+    CREATE TABLE IF NOT EXISTS review_replies (
+      review_id INTEGER PRIMARY KEY REFERENCES reviews(id) ON DELETE CASCADE,
+      master_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS favorite_garages (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      garage_id INTEGER NOT NULL REFERENCES garages(id) ON DELETE CASCADE,
+      created_at BIGINT NOT NULL,
+      PRIMARY KEY (user_id, garage_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS support_tickets (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      role TEXT DEFAULT '',
+      subject TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','IN_PROGRESS','CLOSED')),
+      admin_reply TEXT DEFAULT '',
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS notifications (
@@ -137,6 +168,9 @@ export async function createSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_bookings_garage_status ON bookings(garage_id, status);
     CREATE INDEX IF NOT EXISTS idx_reviews_garage_created ON reviews(garage_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read_at, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_favorite_garages_user ON favorite_garages(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets(user_id, created_at DESC);
   `);
     await db.exec(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS personal_data_agreed INTEGER NOT NULL DEFAULT 0;
@@ -148,10 +182,23 @@ export async function createSchema(db) {
     ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS car_info TEXT DEFAULT '';
     ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS updated_at BIGINT;
     ALTER TABLE master_profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT '';
+    ALTER TABLE master_profiles ADD COLUMN IF NOT EXISTS experience_years INTEGER DEFAULT 0;
+    ALTER TABLE master_profiles ADD COLUMN IF NOT EXISTS specialization TEXT DEFAULT '';
+    ALTER TABLE master_profiles ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '';
+    ALTER TABLE master_profiles ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT '';
     ALTER TABLE garages ADD COLUMN IF NOT EXISTS cover_url TEXT DEFAULT '';
     ALTER TABLE garages ADD COLUMN IF NOT EXISTS photo_urls TEXT DEFAULT '';
     ALTER TABLE garages ADD COLUMN IF NOT EXISTS work_schedule TEXT DEFAULT '';
     ALTER TABLE garages ADD COLUMN IF NOT EXISTS moderation_reason TEXT DEFAULT '';
     ALTER TABLE garages ADD COLUMN IF NOT EXISTS moderated_at BIGINT;
+    ALTER TABLE garages ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancel_reason TEXT DEFAULT '';
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status_updated_at BIGINT;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS master_comment TEXT DEFAULT '';
+    ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS topic TEXT DEFAULT '';
+  `);
+    await db.exec(`
+    ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+    ALTER TABLE bookings ADD CONSTRAINT bookings_status_check CHECK(status IN ('NEW','CONFIRMED','IN_PROGRESS','CANCELLED','DONE'));
   `);
 }

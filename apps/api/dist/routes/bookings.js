@@ -13,6 +13,7 @@ async function requireAuth(req, reply) {
 const statusLabels = {
     NEW: "Новая",
     CONFIRMED: "Подтверждена",
+    IN_PROGRESS: "В работе",
     CANCELLED: "Отменена",
     DONE: "Выполнена",
 };
@@ -90,7 +91,7 @@ export function registerBookingRoutes(app) {
             return reply.code(403).send({ ok: false, error: "Только для пользователей" });
         const rows = await app.db.all(`
         SELECT
-          b.id, b.status, b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
+          b.id, b.status, b.cancel_reason as "cancelReason", b.master_comment as "masterComment", b.status_updated_at as "statusUpdatedAt", b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
           g.id as "garageId", g.title as "garageTitle", g.address as "garageAddress",
           s.name as "serviceName", s.category as "serviceCategory",
           r.id as "reviewId", r.rating as "reviewRating", r.text as "reviewText", r.created_at as "reviewCreatedAt"
@@ -112,7 +113,7 @@ export function registerBookingRoutes(app) {
             return reply.code(403).send({ ok: false, error: "Только для мастеров" });
         const rows = await app.db.all(`
         SELECT
-          b.id, b.status, b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
+          b.id, b.status, b.cancel_reason as "cancelReason", b.master_comment as "masterComment", b.status_updated_at as "statusUpdatedAt", b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
           g.id as "garageId", g.title as "garageTitle", g.address as "garageAddress",
           s.name as "serviceName", s.category as "serviceCategory",
           u.email as "userEmail", u.phone as "userPhone",
@@ -137,7 +138,11 @@ export function registerBookingRoutes(app) {
         if (auth.role !== "MASTER")
             return reply.code(403).send({ ok: false, error: "Только для мастеров" });
         const id = Number(req.params.id);
-        const body = z.object({ status: z.enum(["CONFIRMED", "CANCELLED", "DONE"]) }).parse(req.body);
+        const body = z.object({
+            status: z.enum(["CONFIRMED", "IN_PROGRESS", "CANCELLED", "DONE"]),
+            reason: z.string().trim().max(500).optional().default(""),
+            comment: z.string().trim().max(500).optional().default(""),
+        }).parse(req.body);
         const booking = await app.db.get(`
         SELECT
           b.id, b.user_id, b.garage_id, b.status, b.slot_start, b.slot_end,
@@ -149,15 +154,15 @@ export function registerBookingRoutes(app) {
         if (!booking)
             return reply.code(404).send({ ok: false, error: "Запись не найдена" });
         await app.db.transaction(async (tx) => {
-            await tx.run("UPDATE bookings SET status=? WHERE id=?", [body.status, id]);
+            await tx.run("UPDATE bookings SET status=?, cancel_reason=?, master_comment=?, status_updated_at=? WHERE id=?", [body.status, body.status === "CANCELLED" ? body.reason : "", body.comment || "", Date.now(), id]);
             if (body.status === "CANCELLED") {
                 await tx.run("UPDATE availability_slots SET is_booked=0 WHERE garage_id=? AND start_at=? AND end_at=?", [booking.garage_id, booking.slot_start, booking.slot_end]);
             }
-            if (body.status === "CONFIRMED" || body.status === "DONE") {
+            if (body.status === "CONFIRMED" || body.status === "IN_PROGRESS" || body.status === "DONE") {
                 await tx.run("UPDATE availability_slots SET is_booked=1 WHERE garage_id=? AND start_at=? AND end_at=?", [booking.garage_id, booking.slot_start, booking.slot_end]);
             }
         });
-        await createNotification(app.db, Number(booking.user_id), "BOOKING_STATUS", `Статус заявки #${id}: ${statusLabels[body.status]}`, `Мастерская «${booking.garageTitle}» обновила статус вашей заявки.`, "/me");
+        await createNotification(app.db, Number(booking.user_id), "BOOKING_STATUS", `Статус заявки #${id}: ${statusLabels[body.status]}`, body.status === "CANCELLED" && body.reason ? `Мастерская «${booking.garageTitle}» отменила заявку. Причина: ${body.reason}` : `Мастерская «${booking.garageTitle}» обновила статус вашей заявки.`, "/me");
         return { ok: true };
     });
     app.post("/api/bookings/:id/review", async (req, reply) => {
@@ -211,9 +216,10 @@ export function registerBookingRoutes(app) {
       `, [auth.sub]);
         const reviews = await app.db.all(`
         SELECT
-          r.id, r.rating, r.text, r.created_at as "createdAt",
+          r.id, r.rating, r.text, r.created_at as "createdAt", rr.text as "replyText", rr.updated_at as "replyUpdatedAt",
           b.id as "bookingId", g.id as "garageId", g.title as "garageTitle", s.name as "serviceName"
         FROM reviews r
+        LEFT JOIN review_replies rr ON rr.review_id=r.id
         JOIN bookings b ON b.id=r.booking_id
         JOIN garages g ON g.id=r.garage_id
         JOIN services s ON s.id=b.service_id
@@ -221,6 +227,121 @@ export function registerBookingRoutes(app) {
         ORDER BY r.created_at DESC
       `, [auth.sub]);
         return { ok: true, pending, reviews };
+    });
+    app.get("/api/master/reviews", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        if (auth.role !== "MASTER")
+            return reply.code(403).send({ ok: false, error: "Только для мастеров" });
+        const reviews = await app.db.all(`
+        SELECT
+          r.id, r.rating, r.text, r.created_at as "createdAt",
+          rr.text as "replyText", rr.updated_at as "replyUpdatedAt",
+          g.id as "garageId", g.title as "garageTitle",
+          u.email as "userEmail",
+          COALESCE(up.display_name, '') as "userDisplayName",
+          COALESCE(up.avatar_url, '') as "userAvatarUrl",
+          COALESCE(up.car_info, '') as "userCarInfo"
+        FROM reviews r
+        JOIN garages g ON g.id=r.garage_id
+        JOIN users u ON u.id=r.user_id
+        LEFT JOIN user_profiles up ON up.user_id=u.id
+        LEFT JOIN review_replies rr ON rr.review_id=r.id
+        WHERE g.master_user_id=?
+        ORDER BY r.created_at DESC
+        LIMIT 200
+      `, [auth.sub]);
+        return { ok: true, reviews };
+    });
+    app.patch("/api/master/reviews/:id/reply", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        if (auth.role !== "MASTER")
+            return reply.code(403).send({ ok: false, error: "Только для мастеров" });
+        const id = Number(req.params.id);
+        const body = z.object({ text: z.string().trim().min(2, "Ответ должен быть не короче 2 символов").max(1000) }).parse(req.body ?? {});
+        const review = await app.db.get(`
+        SELECT r.id, r.user_id, r.garage_id, g.title as "garageTitle"
+        FROM reviews r
+        JOIN garages g ON g.id=r.garage_id
+        WHERE r.id=? AND g.master_user_id=?
+      `, [id, auth.sub]);
+        if (!review)
+            return reply.code(404).send({ ok: false, error: "Отзыв не найден" });
+        const now = Date.now();
+        await app.db.run(`
+        INSERT INTO review_replies (review_id, master_user_id, text, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (review_id) DO UPDATE SET text=EXCLUDED.text, updated_at=EXCLUDED.updated_at
+      `, [id, auth.sub, body.text, now, now]);
+        await createNotification(app.db, Number(review.user_id), "REVIEW", "Мастер ответил на отзыв", `Мастерская «${review.garageTitle}» ответила на ваш отзыв.`, `/garage/${review.garage_id}`);
+        return { ok: true };
+    });
+    app.get("/api/admin/bookings", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        if (auth.role !== "ADMIN")
+            return reply.code(403).send({ ok: false, error: "Только для администратора" });
+        const rows = await app.db.all(`
+        SELECT
+          b.id, b.status, b.cancel_reason as "cancelReason", b.master_comment as "masterComment", b.status_updated_at as "statusUpdatedAt",
+          b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
+          g.id as "garageId", g.title as "garageTitle", s.name as "serviceName",
+          u.email as "userEmail", COALESCE(up.display_name, '') as "userDisplayName",
+          mp.display_name as "masterName"
+        FROM bookings b
+        JOIN garages g ON g.id=b.garage_id
+        JOIN services s ON s.id=b.service_id
+        JOIN users u ON u.id=b.user_id
+        LEFT JOIN user_profiles up ON up.user_id=u.id
+        LEFT JOIN master_profiles mp ON mp.user_id=g.master_user_id
+        ORDER BY b.created_at DESC
+        LIMIT 300
+      `);
+        return { ok: true, bookings: rows };
+    });
+    app.get("/api/admin/users", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        if (auth.role !== "ADMIN")
+            return reply.code(403).send({ ok: false, error: "Только для администратора" });
+        const rows = await app.db.all(`
+        SELECT u.id, u.role, u.email, u.phone, u.created_at as "createdAt",
+          COALESCE(up.display_name, mp.display_name, '') as "displayName",
+          COALESCE(up.city, mp.city, '') as city,
+          COALESCE(up.avatar_url, mp.avatar_url, '') as "avatarUrl"
+        FROM users u
+        LEFT JOIN user_profiles up ON up.user_id=u.id
+        LEFT JOIN master_profiles mp ON mp.user_id=u.id
+        ORDER BY u.created_at DESC
+        LIMIT 300
+      `);
+        return { ok: true, users: rows };
+    });
+    app.get("/api/admin/reviews", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        if (auth.role !== "ADMIN")
+            return reply.code(403).send({ ok: false, error: "Только для администратора" });
+        const rows = await app.db.all(`
+        SELECT r.id, r.rating, r.text, r.created_at as "createdAt",
+          g.id as "garageId", g.title as "garageTitle",
+          u.email as "userEmail", COALESCE(up.display_name, '') as "userDisplayName",
+          rr.text as "replyText"
+        FROM reviews r
+        JOIN garages g ON g.id=r.garage_id
+        JOIN users u ON u.id=r.user_id
+        LEFT JOIN user_profiles up ON up.user_id=u.id
+        LEFT JOIN review_replies rr ON rr.review_id=r.id
+        ORDER BY r.created_at DESC
+        LIMIT 300
+      `);
+        return { ok: true, reviews: rows };
     });
     app.get("/api/notifications", async (req, reply) => {
         const auth = await requireAuth(req, reply);

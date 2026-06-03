@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { type HTMLAttributes, type ReactNode } from "react";
 import { cn } from "./cn";
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
@@ -9,8 +9,8 @@ export function Card({ className, children }: { className?: string; children: Re
   );
 }
 
-export function CardBody({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cn("p-5", className)}>{children}</div>;
+export function CardBody({ className, children, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
+  return <div className={cn("p-5", className)} {...props}>{children}</div>;
 }
 
 export function Button({ className, children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {

@@ -27,19 +27,37 @@ function saveFavorites(ids: number[]) {
 export default function Favorites() {
   const [garages, setGarages] = useState<Garage[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<number[]>(() => readFavorites());
+  const [me, setMe] = useState<any>(null);
 
-  useEffect(() => {
-    fetch("/api/garages?approved=1")
-      .then((r) => r.json())
-      .then((j) => setGarages(j.garages ?? []));
-  }, []);
+  async function load() {
+    const auth = await fetch("/api/auth/me").then((r) => r.json()).catch(() => ({ ok: false }));
+    setMe(auth.ok ? auth.user : null);
+    if (auth.ok) {
+      const fav = await fetch("/api/favorites").then((r) => r.json()).catch(() => ({ ok: false }));
+      setGarages(fav.garages ?? []);
+      setFavoriteIds((fav.favoriteIds ?? []).map(Number));
+    } else {
+      const ids = readFavorites();
+      setFavoriteIds(ids);
+      const all = await fetch("/api/garages?approved=1").then((r) => r.json()).catch(() => ({ garages: [] }));
+      setGarages((all.garages ?? []).filter((g: Garage) => ids.includes(g.id)));
+    }
+  }
 
-  const favorites = useMemo(() => garages.filter((g) => favoriteIds.includes(g.id)), [garages, favoriteIds]);
+  useEffect(() => { load(); }, []);
 
-  function remove(id: number) {
+  const favorites = useMemo(() => garages.filter((g) => me ? true : favoriteIds.includes(g.id)), [garages, favoriteIds, me]);
+
+  async function remove(id: number) {
+    if (me) {
+      await fetch(`/api/favorites/${id}`, { method: "DELETE" });
+      await load();
+      return;
+    }
     const next = favoriteIds.filter((x) => x !== id);
     saveFavorites(next);
     setFavoriteIds(next);
+    setGarages((prev) => prev.filter((g) => g.id !== id));
   }
 
   return (

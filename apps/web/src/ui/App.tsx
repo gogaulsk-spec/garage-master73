@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
 import Shell from "./Shell";
 import Home from "../views/Home";
 import Feed from "../views/Feed";
@@ -11,6 +11,8 @@ import Master from "../views/Master";
 import Me from "../views/Me";
 import Favorites from "../views/Favorites";
 import Privacy from "../views/Privacy";
+import Support from "../views/Support";
+import NotFound from "../views/NotFound";
 
 export default function App() {
   return (
@@ -27,7 +29,8 @@ export default function App() {
         <Route path="/master" element={<Master />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/privacy" element={<Privacy />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/support" element={<Support />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </Shell>
   );

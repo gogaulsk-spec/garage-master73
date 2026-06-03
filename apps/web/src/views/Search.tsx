@@ -19,6 +19,7 @@ type Garage = {
   workSchedule?: string;
   lat?: number | null;
   lng?: number | null;
+  futureSlotsCount?: number;
 };
 
 type Service = { id: number; category: string; name: string };
@@ -39,14 +40,23 @@ export default function Search() {
   const [garages, setGarages] = useState<Garage[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [favorites, setFavorites] = useState<number[]>(() => readFavorites());
+  const [me, setMe] = useState<any>(null);
   const search = sp.get("search") ?? "";
   const serviceId = sp.get("serviceId") ?? "";
   const district = sp.get("district") ?? "";
   const rating = sp.get("rating") ?? "";
   const sort = sp.get("sort") ?? "rating";
+  const onlyFree = sp.get("onlyFree") ?? "";
 
   useEffect(() => {
     fetch("/api/services").then((r) => r.json()).then((j) => setServices(j.services ?? []));
+    fetch("/api/auth/me").then((r) => r.json()).then(async (j) => {
+      setMe(j.ok ? j.user : null);
+      if (j.ok) {
+        const fav = await fetch("/api/favorites").then((r) => r.json()).catch(() => ({ ok: false }));
+        if (fav.ok) setFavorites((fav.favoriteIds ?? []).map(Number));
+      }
+    }).catch(() => setMe(null));
   }, []);
 
   useEffect(() => {
@@ -54,8 +64,9 @@ export default function Search() {
     qs.set("approved", "1");
     if (search) qs.set("search", search);
     if (serviceId) qs.set("serviceId", serviceId);
+    if (onlyFree) qs.set("onlyFree", "1");
     fetch(`/api/garages?${qs.toString()}`).then((r) => r.json()).then((j) => setGarages(j.garages ?? []));
-  }, [search, serviceId]);
+  }, [search, serviceId, onlyFree]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, Service[]>();
@@ -88,7 +99,14 @@ export default function Search() {
     setSp(next, { replace: true });
   }
 
-  function favoriteClick(id: number) {
+  async function favoriteClick(id: number) {
+    if (me) {
+      const exists = favorites.includes(id);
+      await fetch(`/api/favorites/${id}`, { method: exists ? "DELETE" : "POST" });
+      const fav = await fetch("/api/favorites").then((r) => r.json()).catch(() => ({ ok: false }));
+      if (fav.ok) setFavorites((fav.favoriteIds ?? []).map(Number));
+      return;
+    }
     toggleFavorite(id);
     setFavorites(readFavorites());
   }
@@ -103,7 +121,7 @@ export default function Search() {
       </div>
 
       <Card>
-        <CardBody className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <CardBody className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <Input placeholder="Поиск: электрика, Лада, кузов..." value={search} onChange={(e) => updateParam("search", e.target.value)} />
           <Select value={serviceId} onChange={(e) => updateParam("serviceId", e.target.value)}>
             <option value="">Все услуги</option>
@@ -127,6 +145,9 @@ export default function Search() {
             <option value="price">Сначала дешевле</option>
             <option value="reviews">Сначала больше отзывов</option>
           </Select>
+          <button type="button" onClick={() => updateParam("onlyFree", onlyFree ? "" : "1")} className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${onlyFree ? "border-emerald-300/40 bg-emerald-300/15 text-emerald-100" : "border-white/10 bg-black/25 text-zinc-300 hover:border-amber-300/35"}`}>
+            Только со свободным временем
+          </button>
         </CardBody>
       </Card>
 
@@ -151,6 +172,7 @@ export default function Search() {
                   <div className="absolute left-3 top-3 flex flex-wrap gap-2">
                     <Badge className="bg-black/60 backdrop-blur">⭐ {Number(g.ratingAvg).toFixed(1)} ({g.ratingCount})</Badge>
                     {g.minPrice ? <Badge className="bg-black/60 backdrop-blur">от {g.minPrice} ₽</Badge> : null}
+                    {Number(g.futureSlotsCount ?? 0) > 0 ? <Badge className="bg-black/60 backdrop-blur">слотов: {g.futureSlotsCount}</Badge> : null}
                   </div>
                   <button
                     type="button"

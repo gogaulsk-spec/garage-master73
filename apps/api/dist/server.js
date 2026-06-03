@@ -10,6 +10,8 @@ import { initDb, seedIfEmpty } from "./db/index.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerGarageRoutes } from "./routes/garages.js";
 import { registerBookingRoutes } from "./routes/bookings.js";
+import { registerFavoriteRoutes } from "./routes/favorites.js";
+import { registerSupportRoutes } from "./routes/support.js";
 import { attachSocket } from "./ws/socket.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,6 +39,8 @@ app.get("/api/health", async () => ({ ok: true, name: "garage-master", ts: Date.
 registerAuthRoutes(app);
 registerGarageRoutes(app);
 registerBookingRoutes(app);
+registerFavoriteRoutes(app);
+registerSupportRoutes(app);
 const publicDir = path.join(__dirname, "..", "public");
 await app.register(statik, { root: publicDir, prefix: "/" });
 app.setNotFoundHandler(async (req, reply) => {

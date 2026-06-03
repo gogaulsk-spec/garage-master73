@@ -24,6 +24,16 @@ const profileSchema = z.object({
   phone: z.string().trim().max(50).optional().default(""),
 });
 
+const masterProfileSchema = z.object({
+  displayName: z.string().trim().min(2, "Укажи имя мастера").max(80),
+  about: z.string().trim().max(1200).optional().default(""),
+  avatarUrl: z.string().trim().max(2_500_000).optional().default(""),
+  experienceYears: z.coerce.number().int().min(0).max(60).optional().default(0),
+  specialization: z.string().trim().max(300).optional().default(""),
+  city: z.string().trim().max(80).optional().default(""),
+  phone: z.string().trim().max(50).optional().default(""),
+});
+
 function defaultDisplayName(email: string) {
   const prefix = email.split("@")[0] || "Пользователь";
   return prefix.slice(0, 1).toUpperCase() + prefix.slice(1);
@@ -170,6 +180,51 @@ export function registerAuthRoutes(app: FastifyInstance) {
       return reply.code(400).send({ ok: false, error: "Не удалось сохранить профиль. Возможно, телефон уже используется другим аккаунтом." });
     }
 
+
+    return { ok: true };
+  });
+
+  app.get("/api/master/profile", async (req, reply) => {
+    const auth = await requireAuth(req, reply);
+    if (!auth) return;
+    if (auth.role !== "MASTER") return reply.code(403).send({ ok: false, error: "Только для мастеров" });
+    const profile = await app.db.get(
+      `
+        SELECT
+          mp.user_id as "userId", mp.display_name as "displayName", mp.about, mp.avatar_url as "avatarUrl",
+          mp.rating_avg as "ratingAvg", mp.rating_count as "ratingCount",
+          COALESCE(mp.experience_years, 0) as "experienceYears",
+          COALESCE(mp.specialization, '') as "specialization",
+          COALESCE(mp.city, '') as "city",
+          COALESCE(mp.phone, '') as "phone"
+        FROM master_profiles mp WHERE mp.user_id=?
+      `,
+      [auth.sub]
+    );
+    return { ok: true, profile };
+  });
+
+  app.patch("/api/master/profile", async (req, reply) => {
+    const auth = await requireAuth(req, reply);
+    if (!auth) return;
+    if (auth.role !== "MASTER") return reply.code(403).send({ ok: false, error: "Только для мастеров" });
+    const body = masterProfileSchema.parse(req.body ?? {});
+    await app.db.run(
+      `
+        INSERT INTO master_profiles (user_id, display_name, about, avatar_url, experience_years, specialization, city, phone)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id) DO UPDATE SET
+          display_name=EXCLUDED.display_name,
+          about=EXCLUDED.about,
+          avatar_url=EXCLUDED.avatar_url,
+          experience_years=EXCLUDED.experience_years,
+          specialization=EXCLUDED.specialization,
+          city=EXCLUDED.city,
+          phone=EXCLUDED.phone
+      `,
+      [auth.sub, body.displayName, body.about, body.avatarUrl, body.experienceYears, body.specialization, body.city, body.phone]
+    );
+    await app.db.run("UPDATE users SET phone=? WHERE id=?", [body.phone || null, auth.sub]);
     return { ok: true };
   });
 }
