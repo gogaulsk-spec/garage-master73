@@ -93,7 +93,7 @@ export function registerBookingRoutes(app) {
           b.id, b.status, b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
           g.id as "garageId", g.title as "garageTitle", g.address as "garageAddress",
           s.name as "serviceName", s.category as "serviceCategory",
-          r.id as "reviewId", r.rating as "reviewRating", r.text as "reviewText"
+          r.id as "reviewId", r.rating as "reviewRating", r.text as "reviewText", r.created_at as "reviewCreatedAt"
         FROM bookings b
         JOIN garages g ON g.id=b.garage_id
         JOIN services s ON s.id=b.service_id
@@ -115,11 +115,15 @@ export function registerBookingRoutes(app) {
           b.id, b.status, b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
           g.id as "garageId", g.title as "garageTitle", g.address as "garageAddress",
           s.name as "serviceName", s.category as "serviceCategory",
-          u.email as "userEmail", u.phone as "userPhone"
+          u.email as "userEmail", u.phone as "userPhone",
+          COALESCE(up.display_name, '') as "userDisplayName",
+          COALESCE(up.avatar_url, '') as "userAvatarUrl",
+          COALESCE(up.car_info, '') as "userCarInfo"
         FROM bookings b
         JOIN garages g ON g.id=b.garage_id
         JOIN services s ON s.id=b.service_id
         JOIN users u ON u.id=b.user_id
+        LEFT JOIN user_profiles up ON up.user_id=u.id
         WHERE g.master_user_id=?
         ORDER BY b.slot_start DESC
         LIMIT 200
@@ -135,14 +139,24 @@ export function registerBookingRoutes(app) {
         const id = Number(req.params.id);
         const body = z.object({ status: z.enum(["CONFIRMED", "CANCELLED", "DONE"]) }).parse(req.body);
         const booking = await app.db.get(`
-        SELECT b.id, b.user_id, b.garage_id, g.title as "garageTitle"
+        SELECT
+          b.id, b.user_id, b.garage_id, b.status, b.slot_start, b.slot_end,
+          g.title as "garageTitle"
         FROM bookings b
         JOIN garages g ON g.id=b.garage_id
         WHERE b.id=? AND g.master_user_id=?
       `, [id, auth.sub]);
         if (!booking)
             return reply.code(404).send({ ok: false, error: "Запись не найдена" });
-        await app.db.run("UPDATE bookings SET status=? WHERE id=?", [body.status, id]);
+        await app.db.transaction(async (tx) => {
+            await tx.run("UPDATE bookings SET status=? WHERE id=?", [body.status, id]);
+            if (body.status === "CANCELLED") {
+                await tx.run("UPDATE availability_slots SET is_booked=0 WHERE garage_id=? AND start_at=? AND end_at=?", [booking.garage_id, booking.slot_start, booking.slot_end]);
+            }
+            if (body.status === "CONFIRMED" || body.status === "DONE") {
+                await tx.run("UPDATE availability_slots SET is_booked=1 WHERE garage_id=? AND start_at=? AND end_at=?", [booking.garage_id, booking.slot_start, booking.slot_end]);
+            }
+        });
         await createNotification(app.db, Number(booking.user_id), "BOOKING_STATUS", `Статус заявки #${id}: ${statusLabels[body.status]}`, `Мастерская «${booking.garageTitle}» обновила статус вашей заявки.`, "/me");
         return { ok: true };
     });
@@ -164,6 +178,9 @@ export function registerBookingRoutes(app) {
             return reply.code(404).send({ ok: false, error: "Заявка не найдена" });
         if (booking.status !== "DONE")
             return reply.code(400).send({ ok: false, error: "Отзыв можно оставить только после выполненной заявки" });
+        const existingReview = await app.db.get("SELECT id FROM reviews WHERE booking_id=?", [id]);
+        if (existingReview)
+            return reply.code(400).send({ ok: false, error: "Отзыв по этой заявке уже существует" });
         try {
             const result = await app.db.run("INSERT INTO reviews (booking_id, user_id, garage_id, rating, text, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", [id, auth.sub, booking.garage_id, body.rating, body.text, Date.now()]);
             await recalcMasterRating(app, Number(booking.garage_id));
@@ -173,6 +190,37 @@ export function registerBookingRoutes(app) {
         catch {
             return reply.code(400).send({ ok: false, error: "Отзыв по этой заявке уже существует" });
         }
+    });
+    app.get("/api/reviews/my", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        if (auth.role !== "USER")
+            return reply.code(403).send({ ok: false, error: "Только для пользователей" });
+        const pending = await app.db.all(`
+        SELECT
+          b.id as "bookingId", b.slot_start as "slotStart", b.slot_end as "slotEnd",
+          g.id as "garageId", g.title as "garageTitle",
+          s.name as "serviceName"
+        FROM bookings b
+        JOIN garages g ON g.id=b.garage_id
+        JOIN services s ON s.id=b.service_id
+        LEFT JOIN reviews r ON r.booking_id=b.id
+        WHERE b.user_id=? AND b.status='DONE' AND r.id IS NULL
+        ORDER BY b.slot_start DESC
+      `, [auth.sub]);
+        const reviews = await app.db.all(`
+        SELECT
+          r.id, r.rating, r.text, r.created_at as "createdAt",
+          b.id as "bookingId", g.id as "garageId", g.title as "garageTitle", s.name as "serviceName"
+        FROM reviews r
+        JOIN bookings b ON b.id=r.booking_id
+        JOIN garages g ON g.id=r.garage_id
+        JOIN services s ON s.id=b.service_id
+        WHERE r.user_id=?
+        ORDER BY r.created_at DESC
+      `, [auth.sub]);
+        return { ok: true, pending, reviews };
     });
     app.get("/api/notifications", async (req, reply) => {
         const auth = await requireAuth(req, reply);

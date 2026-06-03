@@ -343,9 +343,15 @@ export function registerGarageRoutes(app) {
         LIMIT 80
       `, [id, Date.now()])).map((slot) => ({ ...slot, isBooked: Number(slot.isBooked) === 1 }));
         const reviews = await app.db.all(`
-        SELECT r.id, r.rating, r.text, r.created_at as "createdAt", u.email as "userEmail"
+        SELECT
+          r.id, r.rating, r.text, r.created_at as "createdAt",
+          u.email as "userEmail",
+          COALESCE(up.display_name, '') as "userDisplayName",
+          COALESCE(up.avatar_url, '') as "userAvatarUrl",
+          COALESCE(up.car_info, '') as "userCarInfo"
         FROM reviews r
         JOIN users u ON u.id=r.user_id
+        LEFT JOIN user_profiles up ON up.user_id=u.id
         WHERE r.garage_id=?
         ORDER BY r.created_at DESC
         LIMIT 20
@@ -391,7 +397,10 @@ export function registerGarageRoutes(app) {
         const garage = await app.db.get("SELECT id, title, master_user_id FROM garages WHERE id=?", [id]);
         if (!garage)
             return reply.code(404).send({ ok: false, error: "Гараж не найден" });
-        const reason = body.approved === 1 ? "" : body.reason;
+        const reason = body.approved === 1 ? "" : body.reason.trim();
+        if (body.approved === 0 && reason.length < 5) {
+            return reply.code(400).send({ ok: false, error: "Укажи причину отказа или снятия с публикации: минимум 5 символов" });
+        }
         const res = await app.db.run("UPDATE garages SET is_approved=?, moderation_reason=?, moderated_at=? WHERE id=?", [body.approved, reason, Date.now(), id]);
         if (res.changes !== 1)
             return reply.code(404).send({ ok: false, error: "Гараж не найден" });

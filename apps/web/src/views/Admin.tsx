@@ -50,9 +50,13 @@ export default function Admin() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ approved, reason }),
-    }).then((r) => r.json());
-    if (!j.ok) return setErr(j.error ?? "Ошибка модерации");
+    }).then((r) => r.json()).catch(() => ({ ok: false, error: "Сервер не ответил" }));
+    if (!j.ok) {
+      setErr(j.error ?? "Ошибка модерации");
+      return false;
+    }
     await load();
+    return true;
   }
 
   async function confirmReject() {
@@ -64,7 +68,8 @@ export default function Admin() {
     }
     setModerating(true);
     try {
-      await moderate(rejecting.id, 0, reason);
+      const ok = await moderate(rejecting.id, 0, reason);
+      if (!ok) return;
       setRejecting(null);
       setRejectReason("");
     } finally {

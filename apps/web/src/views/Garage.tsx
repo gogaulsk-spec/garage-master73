@@ -23,7 +23,7 @@ type Garage = {
 
 type Service = { id: number; category: string; name: string; priceFrom?: number | null; durationMin?: number | null };
 type Slot = { id: number; startAt: number; endAt: number; isBooked: number | boolean };
-type Review = { id: number; rating: number; text?: string; createdAt: number; userEmail?: string };
+type Review = { id: number; rating: number; text?: string; createdAt: number; userEmail?: string; userDisplayName?: string; userAvatarUrl?: string; userCarInfo?: string };
 
 function readFavorites(): number[] {
   try { return JSON.parse(localStorage.getItem("gm_favorites") || "[]"); } catch { return []; }
@@ -296,11 +296,16 @@ export default function Garage() {
                 <div className="rounded-2xl border border-white/10 bg-white/[.04] p-3 text-sm text-zinc-500">Пока нет отзывов. Отзывы появляются только после выполненной заявки.</div>
               ) : reviews.map((r) => (
                 <div key={r.id} className="rounded-2xl border border-white/10 bg-white/[.04] p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-zinc-100">{r.userEmail ? r.userEmail.split("@")[0] : "Клиент"}</div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      {r.userAvatarUrl ? <img src={r.userAvatarUrl} alt={r.userDisplayName || "Клиент"} className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/10" /> : <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-xs font-black text-zinc-200">{(r.userDisplayName || r.userEmail || "К").slice(0, 2).toUpperCase()}</div>}
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-100">{r.userDisplayName || (r.userEmail ? r.userEmail.split("@")[0] : "Клиент")}</div>
+                        <div className="mt-1 text-xs text-zinc-500">{new Date(r.createdAt).toLocaleDateString()} {r.userCarInfo ? `• ${r.userCarInfo}` : ""}</div>
+                      </div>
+                    </div>
                     <Badge>{"★".repeat(Number(r.rating))}</Badge>
                   </div>
-                  <div className="mt-1 text-xs text-zinc-500">{new Date(r.createdAt).toLocaleDateString()}</div>
                   {r.text ? <p className="mt-2 text-sm leading-6 text-zinc-400">{r.text}</p> : null}
                 </div>
               ))}

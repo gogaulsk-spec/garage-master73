@@ -11,6 +11,9 @@ type Booking = {
   serviceName: string;
   userEmail?: string;
   userPhone?: string;
+  userDisplayName?: string;
+  userAvatarUrl?: string;
+  userCarInfo?: string;
 };
 
 type Service = { id: number; category: string; name: string };
@@ -484,7 +487,10 @@ export default function Master() {
                           <div className="text-sm text-zinc-100">#{b.id} • {b.serviceName}</div>
                           <div className="text-xs text-zinc-500">{new Date(b.slotStart).toLocaleString()} — {new Date(b.slotEnd).toLocaleTimeString()}</div>
                           <div className="text-xs text-zinc-500">{b.garageTitle} • {b.garageAddress}</div>
-                          <div className="text-xs text-zinc-500">Клиент: {b.userEmail || "—"} {b.userPhone ? `• ${b.userPhone}` : ""}</div>
+                          <div className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
+                            {b.userAvatarUrl ? <img src={b.userAvatarUrl} alt={b.userDisplayName || b.userEmail || "Клиент"} className="h-7 w-7 rounded-xl object-cover ring-1 ring-white/10" /> : null}
+                            <span>Клиент: {b.userDisplayName || b.userEmail || "—"} {b.userPhone ? `• ${b.userPhone}` : ""} {b.userCarInfo ? `• ${b.userCarInfo}` : ""}</span>
+                          </div>
                         </div>
                         <Badge>{b.status}</Badge>
                       </div>

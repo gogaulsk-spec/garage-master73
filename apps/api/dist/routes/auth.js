@@ -11,6 +11,27 @@ const loginSchema = z.object({
     email: z.string().trim().email(),
     password: z.string(),
 });
+const profileSchema = z.object({
+    displayName: z.string().trim().max(80).optional().default(""),
+    about: z.string().trim().max(800).optional().default(""),
+    avatarUrl: z.string().trim().max(2_500_000).optional().default(""),
+    city: z.string().trim().max(80).optional().default(""),
+    carInfo: z.string().trim().max(160).optional().default(""),
+    phone: z.string().trim().max(50).optional().default(""),
+});
+function defaultDisplayName(email) {
+    const prefix = email.split("@")[0] || "Пользователь";
+    return prefix.slice(0, 1).toUpperCase() + prefix.slice(1);
+}
+async function requireAuth(req, reply) {
+    try {
+        return (await req.jwtVerify());
+    }
+    catch {
+        reply.code(401).send({ ok: false, error: "Не авторизован" });
+        return null;
+    }
+}
 export function registerAuthRoutes(app) {
     app.post("/api/auth/register", async (req, reply) => {
         const body = authSchema.parse(req.body);
@@ -19,6 +40,7 @@ export function registerAuthRoutes(app) {
         try {
             const res = await app.db.run("INSERT INTO users (role, email, password_hash, personal_data_agreed, personal_data_agreed_at, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", [body.role, body.email.toLowerCase(), pass, 1, now, now]);
             const userId = Number(res.lastInsertRowid);
+            await app.db.run("INSERT INTO user_profiles (user_id, display_name, about, avatar_url, city, car_info, updated_at) VALUES (?, ?, '', '', '', '', ?) RETURNING user_id", [userId, body.displayName || defaultDisplayName(body.email.toLowerCase()), now]);
             if (body.role === "MASTER") {
                 const dn = body.displayName ?? "Новый мастер";
                 await app.db.run("INSERT INTO master_profiles (user_id, display_name, about) VALUES (?, ?, '')", [userId, dn]);
@@ -52,17 +74,71 @@ export function registerAuthRoutes(app) {
         try {
             const payload = await req.jwtVerify();
             const user = await app.db.get(`
-          SELECT id, role, email, phone,
-            personal_data_agreed as "personalDataAgreed",
-            personal_data_agreed_at as "personalDataAgreedAt",
-            created_at as "createdAt"
-          FROM users
-          WHERE id=?
+          SELECT
+            u.id, u.role, u.email, u.phone,
+            u.personal_data_agreed as "personalDataAgreed",
+            u.personal_data_agreed_at as "personalDataAgreedAt",
+            u.created_at as "createdAt",
+            COALESCE(up.display_name, '') as "displayName",
+            COALESCE(up.about, '') as "about",
+            COALESCE(up.avatar_url, '') as "avatarUrl",
+            COALESCE(up.city, '') as "city",
+            COALESCE(up.car_info, '') as "carInfo"
+          FROM users u
+          LEFT JOIN user_profiles up ON up.user_id=u.id
+          WHERE u.id=?
         `, [payload.sub]);
             return { ok: true, user };
         }
         catch {
             return reply.code(401).send({ ok: false });
         }
+    });
+    app.get("/api/profile", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        const user = await app.db.get(`
+        SELECT
+          u.id, u.role, u.email, u.phone,
+          COALESCE(up.display_name, '') as "displayName",
+          COALESCE(up.about, '') as "about",
+          COALESCE(up.avatar_url, '') as "avatarUrl",
+          COALESCE(up.city, '') as "city",
+          COALESCE(up.car_info, '') as "carInfo",
+          COALESCE(up.updated_at, u.created_at) as "updatedAt"
+        FROM users u
+        LEFT JOIN user_profiles up ON up.user_id=u.id
+        WHERE u.id=?
+      `, [auth.sub]);
+        return { ok: true, profile: user };
+    });
+    app.patch("/api/profile", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        const body = profileSchema.parse(req.body ?? {});
+        const now = Date.now();
+        const phone = body.phone.trim() ? body.phone.trim() : null;
+        try {
+            await app.db.transaction(async (tx) => {
+                await tx.run("UPDATE users SET phone=? WHERE id=?", [phone, auth.sub]);
+                await tx.run(`
+            INSERT INTO user_profiles (user_id, display_name, about, avatar_url, city, car_info, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id) DO UPDATE SET
+              display_name=EXCLUDED.display_name,
+              about=EXCLUDED.about,
+              avatar_url=EXCLUDED.avatar_url,
+              city=EXCLUDED.city,
+              car_info=EXCLUDED.car_info,
+              updated_at=EXCLUDED.updated_at
+          `, [auth.sub, body.displayName, body.about, body.avatarUrl, body.city, body.carInfo, now]);
+            });
+        }
+        catch {
+            return reply.code(400).send({ ok: false, error: "Не удалось сохранить профиль. Возможно, телефон уже используется другим аккаунтом." });
+        }
+        return { ok: true };
     });
 }

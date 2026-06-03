@@ -11,6 +11,16 @@ export async function createSchema(db) {
       created_at BIGINT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      display_name TEXT DEFAULT '',
+      about TEXT DEFAULT '',
+      avatar_url TEXT DEFAULT '',
+      city TEXT DEFAULT '',
+      car_info TEXT DEFAULT '',
+      updated_at BIGINT
+    );
+
     CREATE TABLE IF NOT EXISTS master_profiles (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       display_name TEXT NOT NULL,
@@ -131,6 +141,12 @@ export async function createSchema(db) {
     await db.exec(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS personal_data_agreed INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS personal_data_agreed_at BIGINT;
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT '';
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS about TEXT DEFAULT '';
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT '';
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '';
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS car_info TEXT DEFAULT '';
+    ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS updated_at BIGINT;
     ALTER TABLE master_profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT '';
     ALTER TABLE garages ADD COLUMN IF NOT EXISTS cover_url TEXT DEFAULT '';
     ALTER TABLE garages ADD COLUMN IF NOT EXISTS photo_urls TEXT DEFAULT '';

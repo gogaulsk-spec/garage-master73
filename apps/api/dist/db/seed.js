@@ -49,10 +49,12 @@ export async function seed(db) {
     const serviceRows = await db.all("SELECT id, category, name FROM services");
     const serviceByName = new Map(serviceRows.map((s) => [s.name, s.id]));
     const passAdmin = hashPassword("admin123");
-    await db.run("INSERT INTO users (role, email, password_hash, personal_data_agreed, personal_data_agreed_at, created_at) VALUES ('ADMIN', ?, ?, 1, ?, ?) RETURNING id", ["admin@example.com", passAdmin, now, now]);
+    const adminRes = await db.run("INSERT INTO users (role, email, password_hash, personal_data_agreed, personal_data_agreed_at, created_at) VALUES ('ADMIN', ?, ?, 1, ?, ?) RETURNING id", ["admin@example.com", passAdmin, now, now]);
+    await db.run("INSERT INTO user_profiles (user_id, display_name, about, avatar_url, city, car_info, updated_at) VALUES (?, 'Администратор', 'Проверяет карточки мастерских и следит за качеством каталога.', '', 'Ульяновск', '', ?) RETURNING user_id", [Number(adminRes.lastInsertRowid), now]);
     const passUser = hashPassword("user123");
     const userRes = await db.run("INSERT INTO users (role, email, password_hash, personal_data_agreed, personal_data_agreed_at, created_at) VALUES ('USER', ?, ?, 1, ?, ?) RETURNING id", ["user@example.com", passUser, now, now]);
     const demoUserId = Number(userRes.lastInsertRowid);
+    await db.run("INSERT INTO user_profiles (user_id, display_name, about, avatar_url, city, car_info, updated_at) VALUES (?, 'Алексей', 'Люблю понятный ремонт без лишних замен. Ищу мастеров по электрике, подвеске и обслуживанию.', '/images/master-sergey.jpg', 'Ульяновск', 'Lada Priora 2012', ?) RETURNING user_id", [demoUserId, now]);
     const masterPass = hashPassword("master123");
     const masters = [
         {
@@ -180,6 +182,7 @@ export async function seed(db) {
     for (const m of masters) {
         const userRes = await db.run("INSERT INTO users (role, email, password_hash, personal_data_agreed, personal_data_agreed_at, created_at) VALUES ('MASTER', ?, ?, 1, ?, ?) RETURNING id", [m.email, masterPass, now, now]);
         const masterId = Number(userRes.lastInsertRowid);
+        await db.run("INSERT INTO user_profiles (user_id, display_name, about, avatar_url, city, car_info, updated_at) VALUES (?, ?, ?, ?, 'Ульяновск', '', ?) RETURNING user_id", [masterId, m.name, m.about, m.avatar, now]);
         await db.run("INSERT INTO master_profiles (user_id, display_name, about, avatar_url, rating_avg, rating_count) VALUES (?, ?, ?, ?, 0, 0)", [
             masterId,
             m.name,
