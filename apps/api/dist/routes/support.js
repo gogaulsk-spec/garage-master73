@@ -36,7 +36,7 @@ export function registerSupportRoutes(app) {
         const now = Date.now();
         const res = await app.db.run("INSERT INTO support_tickets (user_id, role, topic, subject, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?) RETURNING id", [auth.sub, auth.role, body.topic, body.subject, body.message, now, now]);
         const admins = await app.db.all("SELECT id FROM users WHERE role='ADMIN'");
-        await Promise.all(admins.map((admin) => createNotification(app.db, Number(admin.id), "SUPPORT", "Новое обращение в поддержку", body.subject, "/admin")));
+        await Promise.all(admins.map((admin) => createNotification(app.db, Number(admin.id), "SUPPORT", "Новое обращение в поддержку", body.subject, "/admin/support")));
         return { ok: true, ticketId: res.lastInsertRowid };
     });
     app.get("/api/admin/support", async (req, reply) => {

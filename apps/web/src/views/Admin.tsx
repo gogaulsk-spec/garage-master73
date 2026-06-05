@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Badge, Button, Card, CardBody, SectionTitle, Textarea } from "../ui/components";
 
 type Garage = {
@@ -31,6 +31,7 @@ type Tab = "stats" | "moderation" | "users" | "bookings" | "reviews" | "support"
 
 const statusText: Record<string, string> = { NEW: "Новая", CONFIRMED: "Подтверждена", IN_PROGRESS: "В работе", CANCELLED: "Отменена", DONE: "Выполнена" };
 const roleText: Record<string, string> = { ADMIN: "Админ", MASTER: "Мастер", USER: "Клиент" };
+const adminTabs: Tab[] = ["stats", "moderation", "users", "bookings", "reviews", "support"];
 
 function toMs(value: unknown) {
   const n = Number(value);
@@ -57,6 +58,8 @@ function statusClass(status: string) {
 }
 
 export default function Admin() {
+  const navigate = useNavigate();
+  const params = useParams();
   const [me, setMe] = useState<any>(null);
   const [garages, setGarages] = useState<Garage[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -65,11 +68,13 @@ export default function Admin() {
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
   const [supportReplies, setSupportReplies] = useState<Record<number, string>>({});
   const [adminStats, setAdminStats] = useState<AdminStats>({});
-  const [activeTab, setActiveTab] = useState<Tab>("stats");
+  const [activeTab, setActiveTab] = useState<Tab>(() => adminTabs.includes(params.tab as Tab) ? (params.tab as Tab) : "stats");
   const [err, setErr] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<RejectDialog>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [moderating, setModerating] = useState(false);
+  const [replyingTicket, setReplyingTicket] = useState<SupportTicket | null>(null);
+  const [supportSaving, setSupportSaving] = useState(false);
 
   async function load() {
     setErr(null);
@@ -108,6 +113,17 @@ export default function Admin() {
   }
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    const tab = params.tab as Tab | undefined;
+    if (tab && adminTabs.includes(tab)) setActiveTab(tab);
+    if (!tab && activeTab !== "stats") setActiveTab("stats");
+  }, [params.tab]);
+
+  function switchTab(tab: Tab) {
+    setActiveTab(tab);
+    navigate(tab === "stats" ? "/admin" : `/admin/${tab}`);
+  }
 
   async function moderate(id: number, approved: 0 | 1, reason = "") {
     setErr(null);
@@ -150,13 +166,28 @@ export default function Admin() {
 
   async function updateSupport(id: number, status: "OPEN" | "IN_PROGRESS" | "CLOSED") {
     setErr(null);
-    const j = await fetch(`/api/admin/support/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status, adminReply: supportReplies[id] || "" }),
-    }).then((r) => r.json()).catch(() => ({ ok: false, error: "Сервер не ответил" }));
-    if (!j.ok) return setErr(j.error ?? "Не удалось обновить обращение");
-    await load();
+    const answer = (supportReplies[id] || "").trim();
+    if (status === "CLOSED" && answer.length < 3) {
+      setErr("Перед закрытием обращения напиши ответ пользователю.");
+      return false;
+    }
+    setSupportSaving(true);
+    try {
+      const j = await fetch(`/api/admin/support/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, adminReply: answer }),
+      }).then((r) => r.json()).catch(() => ({ ok: false, error: "Сервер не ответил" }));
+      if (!j.ok) {
+        setErr(j.error ?? "Не удалось обновить обращение");
+        return false;
+      }
+      setReplyingTicket(null);
+      await load();
+      return true;
+    } finally {
+      setSupportSaving(false);
+    }
   }
 
   const pending = garages.filter((g) => !g.is_approved && !g.moderationReason);
@@ -193,7 +224,7 @@ export default function Admin() {
 
           <div className="flex flex-wrap gap-2 rounded-3xl border border-white/10 bg-white/[.035] p-1">
             {tabs.map(([key, label]) => (
-              <button key={key} type="button" onClick={() => setActiveTab(key)} className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${activeTab === key ? "bg-amber-400 text-zinc-950" : "text-zinc-300 hover:bg-white/10 hover:text-zinc-50"}`}>{label}</button>
+              <button key={key} type="button" onClick={() => switchTab(key)} className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${activeTab === key ? "bg-amber-400 text-zinc-950" : "text-zinc-300 hover:bg-white/10 hover:text-zinc-50"}`}>{label}</button>
             ))}
           </div>
 
@@ -233,9 +264,72 @@ export default function Admin() {
 
           {activeTab === "reviews" ? <Card><CardBody className="space-y-3"><div className="text-xl font-semibold text-zinc-50">Отзывы</div>{reviews.length === 0 ? <Empty text="Отзывов пока нет." /> : <div className="space-y-2">{reviews.map((r) => <div key={r.id} className="rounded-2xl border border-white/10 bg-white/[.04] p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold text-zinc-100">{r.garageTitle}</div><div className="text-xs text-zinc-500">{r.userDisplayName || r.userEmail || "Клиент"} • {formatDate(r.createdAt)}</div></div><Badge>{"★".repeat(Number(r.rating))}</Badge></div>{r.text ? <div className="mt-2 text-sm leading-6 text-zinc-400">{r.text}</div> : null}{r.replyText ? <div className="mt-2 rounded-2xl border border-amber-300/15 bg-amber-300/10 p-3 text-sm text-amber-100">Ответ мастера: {r.replyText}</div> : null}</div>)}</div>}</CardBody></Card> : null}
 
-          {activeTab === "support" ? <Card><CardBody className="space-y-3"><div className="text-xl font-semibold text-zinc-50">Обращения в поддержку</div>{supportTickets.length === 0 ? <Empty text="Обращений пока нет." /> : <div className="space-y-3">{supportTickets.map((t) => (<div key={t.id} className="rounded-3xl border border-white/10 bg-white/[.04] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold text-zinc-50">#{t.id} • {t.subject}</div><div className="mt-1 text-xs text-zinc-500">{t.topic || "Другое"} • {t.displayName || t.userEmail || "Пользователь"} • {t.userRole || ""}</div></div><Badge className={t.status === "CLOSED" ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-200" : t.status === "IN_PROGRESS" ? "border-amber-300/25 bg-amber-300/10 text-amber-200" : ""}>{t.status === "OPEN" ? "Новое" : t.status === "IN_PROGRESS" ? "В работе" : "Закрыто"}</Badge></div><div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-sm leading-6 text-zinc-300">{t.message}</div><label className="mt-3 block space-y-2 text-xs text-zinc-400">Ответ администратора<Textarea value={supportReplies[t.id] || ""} onChange={(e) => setSupportReplies((p) => ({ ...p, [t.id]: e.target.value }))} /></label><div className="mt-3 flex flex-wrap gap-2"><Button className="bg-white/10 text-zinc-50 shadow-none" onClick={() => updateSupport(t.id, "IN_PROGRESS")}>В работу</Button><Button onClick={() => updateSupport(t.id, "CLOSED")}>Закрыть с ответом</Button></div></div>))}</div>}</CardBody></Card> : null}
+          {activeTab === "support" ? (
+            <Card>
+              <CardBody className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xl font-semibold text-zinc-50">Обращения в поддержку</div>
+                    <div className="mt-1 text-sm text-zinc-500">Открой обращение кнопкой «Ответить», напиши текст и закрой заявку.</div>
+                  </div>
+                  <Badge>{supportTickets.filter((t) => t.status !== "CLOSED").length} активных</Badge>
+                </div>
+                {supportTickets.length === 0 ? <Empty text="Обращений пока нет." /> : (
+                  <div className="space-y-3">
+                    {supportTickets.map((t) => (
+                      <div key={t.id} className="rounded-3xl border border-white/10 bg-white/[.04] p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div className="font-semibold text-zinc-50">#{t.id} • {t.subject}</div>
+                            <div className="mt-1 text-xs text-zinc-500">{t.topic || "Другое"} • {t.displayName || t.userEmail || "Пользователь"} • {roleText[t.userRole || ""] || t.userRole || ""}</div>
+                            <div className="mt-1 text-xs text-zinc-600">Создано: {formatDate(t.createdAt)}</div>
+                          </div>
+                          <Badge className={t.status === "CLOSED" ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-200" : t.status === "IN_PROGRESS" ? "border-amber-300/25 bg-amber-300/10 text-amber-200" : "border-sky-300/25 bg-sky-300/10 text-sky-200"}>{t.status === "OPEN" ? "Новое" : t.status === "IN_PROGRESS" ? "В работе" : "Закрыто"}</Badge>
+                        </div>
+                        <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-sm leading-6 text-zinc-300 whitespace-pre-wrap">{t.message}</div>
+                        {t.adminReply ? <div className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-3 text-sm leading-6 text-amber-100"><span className="font-semibold">Текущий ответ:</span> {t.adminReply}</div> : null}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button type="button" onClick={() => { setReplyingTicket(t); setSupportReplies((p) => ({ ...p, [t.id]: p[t.id] ?? t.adminReply ?? "" })); }}>
+                            Ответить
+                          </Button>
+                          {t.status === "OPEN" ? <Button type="button" className="bg-white/10 text-zinc-50 shadow-none" onClick={() => updateSupport(t.id, "IN_PROGRESS")} disabled={supportSaving}>В работу</Button> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardBody>
+            </Card>
+          ) : null}
         </>
       )}
+
+      {replyingTicket ? (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-black/70 px-4 backdrop-blur-sm">
+          <Card className="w-full max-w-2xl">
+            <CardBody className="space-y-4">
+              <div>
+                <div className="text-xl font-semibold text-zinc-50">Ответ в поддержку</div>
+                <div className="mt-1 text-sm text-zinc-500">#{replyingTicket.id} • {replyingTicket.subject}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm leading-6 text-zinc-300 whitespace-pre-wrap">{replyingTicket.message}</div>
+              <label className="block space-y-2 text-xs text-zinc-400">
+                Ответ пользователю
+                <Textarea
+                  value={supportReplies[replyingTicket.id] || ""}
+                  onChange={(e) => setSupportReplies((p) => ({ ...p, [replyingTicket.id]: e.target.value }))}
+                  placeholder="Напишите ответ. После закрытия обращения пользователь увидит его в разделе поддержки."
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" onClick={() => updateSupport(replyingTicket.id, "CLOSED")} disabled={supportSaving}>{supportSaving ? "Отправляю..." : "Отправить и закрыть"}</Button>
+                <Button type="button" className="bg-white/10 text-zinc-50 shadow-none" onClick={() => updateSupport(replyingTicket.id, "IN_PROGRESS")} disabled={supportSaving}>Сохранить как «В работе»</Button>
+                <Button type="button" className="bg-white/10 text-zinc-50 shadow-none" onClick={() => setReplyingTicket(null)} disabled={supportSaving}>Отмена</Button>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
+      ) : null}
 
       {rejecting ? (
         <div className="fixed inset-0 z-[80] grid place-items-center bg-black/70 px-4 backdrop-blur-sm">

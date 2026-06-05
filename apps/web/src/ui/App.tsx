@@ -12,6 +12,7 @@ import Me from "../views/Me";
 import Favorites from "../views/Favorites";
 import Privacy from "../views/Privacy";
 import Support from "../views/Support";
+import ClientProfile from "../views/ClientProfile";
 import NotFound from "../views/NotFound";
 
 export default function App() {
@@ -28,8 +29,10 @@ export default function App() {
         <Route path="/me" element={<Me />} />
         <Route path="/master" element={<Master />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/admin/:tab" element={<Admin />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/support" element={<Support />} />
+        <Route path="/client/:id" element={<ClientProfile />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Shell>

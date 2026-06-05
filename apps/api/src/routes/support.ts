@@ -46,7 +46,7 @@ export function registerSupportRoutes(app: FastifyInstance) {
       [auth.sub, auth.role, body.topic, body.subject, body.message, now, now]
     );
     const admins = await app.db.all<{ id: number }>("SELECT id FROM users WHERE role='ADMIN'");
-    await Promise.all(admins.map((admin) => createNotification(app.db, Number(admin.id), "SUPPORT", "Новое обращение в поддержку", body.subject, "/admin")));
+    await Promise.all(admins.map((admin) => createNotification(app.db, Number(admin.id), "SUPPORT", "Новое обращение в поддержку", body.subject, "/admin/support")));
     return { ok: true, ticketId: res.lastInsertRowid };
   });
 

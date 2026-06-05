@@ -116,7 +116,7 @@ export function registerBookingRoutes(app) {
           b.id, b.status, b.cancel_reason as "cancelReason", b.master_comment as "masterComment", b.status_updated_at as "statusUpdatedAt", b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
           g.id as "garageId", g.title as "garageTitle", g.address as "garageAddress",
           s.name as "serviceName", s.category as "serviceCategory",
-          u.email as "userEmail", u.phone as "userPhone",
+          u.id as "userId", u.email as "userEmail", u.phone as "userPhone",
           COALESCE(up.display_name, '') as "userDisplayName",
           COALESCE(up.avatar_url, '') as "userAvatarUrl",
           COALESCE(up.car_info, '') as "userCarInfo"
@@ -239,7 +239,7 @@ export function registerBookingRoutes(app) {
           r.id, r.rating, r.text, r.created_at as "createdAt",
           rr.text as "replyText", rr.updated_at as "replyUpdatedAt",
           g.id as "garageId", g.title as "garageTitle",
-          u.email as "userEmail",
+          u.id as "userId", u.email as "userEmail",
           COALESCE(up.display_name, '') as "userDisplayName",
           COALESCE(up.avatar_url, '') as "userAvatarUrl",
           COALESCE(up.car_info, '') as "userCarInfo"

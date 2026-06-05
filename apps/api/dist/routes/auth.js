@@ -190,4 +190,72 @@ export function registerAuthRoutes(app) {
         await app.db.run("UPDATE users SET phone=? WHERE id=?", [body.phone || null, auth.sub]);
         return { ok: true };
     });
+    app.get("/api/users/:id/profile", async (req, reply) => {
+        const auth = await requireAuth(req, reply);
+        if (!auth)
+            return;
+        const id = Number(req.params.id);
+        if (!Number.isFinite(id) || id <= 0)
+            return reply.code(400).send({ ok: false, error: "Некорректный клиент" });
+        let canView = auth.role === "ADMIN" || auth.sub === id;
+        if (!canView && auth.role === "MASTER") {
+            const relation = await app.db.get(`
+          SELECT b.id
+          FROM bookings b
+          JOIN garages g ON g.id=b.garage_id
+          WHERE b.user_id=? AND g.master_user_id=?
+          LIMIT 1
+        `, [id, auth.sub]);
+            canView = !!relation;
+        }
+        if (!canView)
+            return reply.code(403).send({ ok: false, error: "Профиль доступен только мастеру, у которого есть заявка этого клиента" });
+        const profile = await app.db.get(`
+        SELECT
+          u.id, u.role, u.email, u.phone, u.created_at as "createdAt",
+          COALESCE(up.display_name, '') as "displayName",
+          COALESCE(up.about, '') as "about",
+          COALESCE(up.avatar_url, '') as "avatarUrl",
+          COALESCE(up.city, '') as "city",
+          COALESCE(up.car_info, '') as "carInfo",
+          COALESCE(up.updated_at, u.created_at) as "updatedAt"
+        FROM users u
+        LEFT JOIN user_profiles up ON up.user_id=u.id
+        WHERE u.id=? AND u.role='USER'
+      `, [id]);
+        if (!profile)
+            return reply.code(404).send({ ok: false, error: "Клиент не найден" });
+        const scopedParams = auth.role === "MASTER" ? [id, auth.sub] : [id];
+        const scopedWhere = auth.role === "MASTER" ? "b.user_id=? AND g.master_user_id=?" : "b.user_id=?";
+        const stats = await app.db.get(`
+        SELECT
+          COUNT(*) as "bookingsTotal",
+          SUM(CASE WHEN b.status='DONE' THEN 1 ELSE 0 END) as "bookingsDone",
+          SUM(CASE WHEN b.status='CANCELLED' THEN 1 ELSE 0 END) as "bookingsCancelled",
+          SUM(CASE WHEN b.status IN ('NEW','CONFIRMED','IN_PROGRESS') THEN 1 ELSE 0 END) as "bookingsActive"
+        FROM bookings b
+        JOIN garages g ON g.id=b.garage_id
+        WHERE ${scopedWhere}
+      `, scopedParams);
+        const reviews = await app.db.get(`
+        SELECT COUNT(*) as "reviewsTotal", COALESCE(ROUND(AVG(r.rating)::numeric, 1), 0) as "ratingAvg"
+        FROM reviews r
+        JOIN garages g ON g.id=r.garage_id
+        WHERE ${auth.role === "MASTER" ? "r.user_id=? AND g.master_user_id=?" : "r.user_id=?"}
+      `, scopedParams);
+        const bookings = await app.db.all(`
+        SELECT
+          b.id, b.status, b.slot_start as "slotStart", b.slot_end as "slotEnd", b.created_at as "createdAt",
+          b.cancel_reason as "cancelReason", b.master_comment as "masterComment",
+          g.id as "garageId", g.title as "garageTitle", g.address as "garageAddress",
+          s.name as "serviceName", s.category as "serviceCategory"
+        FROM bookings b
+        JOIN garages g ON g.id=b.garage_id
+        JOIN services s ON s.id=b.service_id
+        WHERE ${scopedWhere}
+        ORDER BY b.slot_start DESC
+        LIMIT 50
+      `, scopedParams);
+        return { ok: true, profile, stats: { ...stats, ...reviews }, bookings };
+    });
 }

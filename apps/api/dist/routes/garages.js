@@ -29,8 +29,9 @@ const scheduleSchema = z
     startTime: z.string().regex(/^\d{2}:\d{2}$/).optional().default("10:00"),
     endTime: z.string().regex(/^\d{2}:\d{2}$/).optional().default("18:00"),
     slotDurationMin: z.coerce.number().int().min(30).max(240).default(60),
-    daysMode: z.enum(["weekdays", "daily", "custom"]).optional().default("weekdays"),
+    daysMode: z.enum(["weekdays", "daily", "custom", "dates"]).optional().default("weekdays"),
     weekdays: z.array(z.coerce.number().int().min(0).max(6)).max(7).optional().default(WORKDAYS),
+    selectedDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(60).optional().default([]),
 })
     .superRefine((value, ctx) => {
     const start = parseTimeToMinutes(value.startTime, value.startHour ?? 10);
@@ -41,6 +42,9 @@ const scheduleSchema = z
     if (value.daysMode === "custom" && (!value.weekdays || value.weekdays.length === 0)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Выбери хотя бы один рабочий день", path: ["weekdays"] });
     }
+    if (value.daysMode === "dates" && (!value.selectedDates || value.selectedDates.length === 0)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Выбери хотя бы одну дату в календаре", path: ["selectedDates"] });
+    }
 });
 function selectedWeekdays(daysMode, weekdays) {
     if (daysMode === "daily")
@@ -48,6 +52,19 @@ function selectedWeekdays(daysMode, weekdays) {
     if (daysMode === "weekdays")
         return WORKDAYS;
     return Array.from(new Set((weekdays ?? []).map(Number).filter((d) => d >= 0 && d <= 6)));
+}
+function parseSelectedDates(selectedDates) {
+    return Array.from(new Set(selectedDates ?? []))
+        .map((dateKey) => {
+        const [year, month, day] = dateKey.split("-").map(Number);
+        if (!year || !month || !day)
+            return null;
+        const date = new Date(year, month - 1, day);
+        date.setHours(0, 0, 0, 0);
+        return date;
+    })
+        .filter((date) => !!date && !Number.isNaN(date.getTime()))
+        .sort((a, b) => a.getTime() - b.getTime());
 }
 const masterGarageSchema = z.object({
     title: z.string().trim().min(3, "Название должно быть не короче 3 символов"),
@@ -66,7 +83,7 @@ const masterGarageSchema = z.object({
         durationMin: z.coerce.number().int().min(15).max(480).optional(),
     }))
         .min(1, "Добавь хотя бы одну услугу"),
-    schedule: scheduleSchema.default({ daysAhead: 14, startTime: "10:00", endTime: "18:00", slotDurationMin: 60, workSchedule: "По будням 10:00–18:00", daysMode: "weekdays", weekdays: WORKDAYS }),
+    schedule: scheduleSchema.default({ daysAhead: 14, startTime: "10:00", endTime: "18:00", slotDurationMin: 60, workSchedule: "По будням 10:00–18:00", daysMode: "weekdays", weekdays: WORKDAYS, selectedDates: [] }),
 });
 function normalizeStartDay(ts = Date.now()) {
     const day = new Date(ts);
@@ -153,10 +170,10 @@ async function createSlots(db, garageId, opts) {
     const startMinutes = parseTimeToMinutes(opts.startTime, opts.startHour ?? 10);
     const endMinutes = parseTimeToMinutes(opts.endTime, opts.endHour ?? 18);
     let slotsCreated = 0;
-    for (let d = 0; d < opts.daysAhead; d++) {
-        const day = new Date(startDay.getTime() + d * 24 * 60 * 60 * 1000);
-        if (!allowedDays.has(day.getDay()))
-            continue;
+    const days = opts.daysMode === "dates"
+        ? parseSelectedDates(opts.selectedDates).filter((day) => day.getTime() >= startDay.getTime())
+        : Array.from({ length: opts.daysAhead }, (_, d) => new Date(startDay.getTime() + d * 24 * 60 * 60 * 1000)).filter((day) => allowedDays.has(day.getDay()));
+    for (const day of days) {
         const from = new Date(day);
         from.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
         const to = new Date(day);
