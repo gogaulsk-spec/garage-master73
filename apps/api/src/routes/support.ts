@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createNotification } from "../lib/notifications.js";
+import { hashPassword } from "../security/password.js";
 
 type AuthPayload = { sub: number; role: "ADMIN" | "MASTER" | "USER" };
 
@@ -84,6 +85,127 @@ export function registerSupportRoutes(app: FastifyInstance) {
       await createNotification(app.db, Number(ticket.user_id), "SUPPORT", "Ответ поддержки", `По обращению «${ticket.subject}» обновлён статус.`, "/support");
     }
     return { ok: true };
+  });
+
+
+  app.post("/api/admin/reset-clean", async (req, reply) => {
+    const auth = await requireAuth(req, reply);
+    if (!auth) return;
+    if (auth.role !== "ADMIN") return reply.code(403).send({ ok: false, error: "Только для администратора" });
+
+    const body = z.object({
+      confirm: z.literal("RESET_GARAGE_MASTER"),
+    }).parse(req.body ?? {});
+
+    const keepEmails = ["admin@example.com", "master@example.com", "user@example.com"];
+    const now = Date.now();
+    const adminHash = hashPassword("admin123");
+    const masterHash = hashPassword("master123");
+    const userHash = hashPassword("user123");
+
+    const result = await app.db.transaction(async (tx) => {
+      const before = {
+        garages: Number((await tx.get<{ c: string | number }>("SELECT COUNT(1) as c FROM garages"))?.c ?? 0),
+        bookings: Number((await tx.get<{ c: string | number }>("SELECT COUNT(1) as c FROM bookings"))?.c ?? 0),
+        reviews: Number((await tx.get<{ c: string | number }>("SELECT COUNT(1) as c FROM reviews"))?.c ?? 0),
+        users: Number((await tx.get<{ c: string | number }>("SELECT COUNT(1) as c FROM users WHERE email NOT IN (?, ?, ?)", keepEmails))?.c ?? 0),
+      };
+
+      await tx.run("DELETE FROM review_replies");
+      await tx.run("DELETE FROM reviews");
+      await tx.run("DELETE FROM messages");
+      await tx.run("DELETE FROM conversations");
+      await tx.run("DELETE FROM favorite_garages");
+      await tx.run("DELETE FROM notifications");
+      await tx.run("DELETE FROM support_tickets");
+      await tx.run("DELETE FROM logbook_entries");
+      await tx.run("DELETE FROM bookings");
+      await tx.run("DELETE FROM availability_slots");
+      await tx.run("DELETE FROM garage_services");
+      await tx.run("DELETE FROM garages");
+
+      await tx.run("DELETE FROM master_profiles WHERE user_id NOT IN (SELECT id FROM users WHERE email IN (?, ?, ?))", keepEmails);
+      await tx.run("DELETE FROM user_profiles WHERE user_id NOT IN (SELECT id FROM users WHERE email IN (?, ?, ?))", keepEmails);
+      await tx.run("DELETE FROM users WHERE email NOT IN (?, ?, ?)", keepEmails);
+
+      await tx.run(
+        `
+          INSERT INTO users (role, email, password_hash, personal_data_agreed, personal_data_agreed_at, created_at)
+          VALUES ('ADMIN', ?, ?, 1, ?, ?)
+          ON CONFLICT (email) DO UPDATE SET role='ADMIN', password_hash=EXCLUDED.password_hash, personal_data_agreed=1, personal_data_agreed_at=EXCLUDED.personal_data_agreed_at
+        `,
+        ["admin@example.com", adminHash, now, now]
+      );
+      await tx.run(
+        `
+          INSERT INTO users (role, email, password_hash, personal_data_agreed, personal_data_agreed_at, created_at)
+          VALUES ('MASTER', ?, ?, 1, ?, ?)
+          ON CONFLICT (email) DO UPDATE SET role='MASTER', password_hash=EXCLUDED.password_hash, personal_data_agreed=1, personal_data_agreed_at=EXCLUDED.personal_data_agreed_at
+        `,
+        ["master@example.com", masterHash, now, now]
+      );
+      await tx.run(
+        `
+          INSERT INTO users (role, email, password_hash, personal_data_agreed, personal_data_agreed_at, created_at)
+          VALUES ('USER', ?, ?, 1, ?, ?)
+          ON CONFLICT (email) DO UPDATE SET role='USER', password_hash=EXCLUDED.password_hash, personal_data_agreed=1, personal_data_agreed_at=EXCLUDED.personal_data_agreed_at
+        `,
+        ["user@example.com", userHash, now, now]
+      );
+
+      const admin = await tx.get<{ id: number }>("SELECT id FROM users WHERE email=?", ["admin@example.com"]);
+      const master = await tx.get<{ id: number }>("SELECT id FROM users WHERE email=?", ["master@example.com"]);
+      const user = await tx.get<{ id: number }>("SELECT id FROM users WHERE email=?", ["user@example.com"]);
+
+      if (admin) {
+        await tx.run(
+          `
+            INSERT INTO user_profiles (user_id, display_name, about, avatar_url, city, car_info, updated_at)
+            VALUES (?, 'Администратор', 'Управляет модерацией, пользователями, заявками и поддержкой GarageMaster.', '', 'Ульяновск', '', ?)
+            ON CONFLICT (user_id) DO UPDATE SET display_name=EXCLUDED.display_name, about=EXCLUDED.about, updated_at=EXCLUDED.updated_at
+          `,
+          [Number(admin.id), now]
+        );
+      }
+      if (master) {
+        await tx.run(
+          `
+            INSERT INTO user_profiles (user_id, display_name, about, avatar_url, city, car_info, updated_at)
+            VALUES (?, 'Иван Сафонов', 'Тестовый мастер. Можно создать новую карточку гаража и проверить работу заявок.', '/images/master-ivan.jpg', 'Ульяновск', '', ?)
+            ON CONFLICT (user_id) DO UPDATE SET display_name=EXCLUDED.display_name, about=EXCLUDED.about, avatar_url=EXCLUDED.avatar_url, city=EXCLUDED.city, updated_at=EXCLUDED.updated_at
+          `,
+          [Number(master.id), now]
+        );
+        await tx.run(
+          `
+            INSERT INTO master_profiles (user_id, display_name, about, avatar_url, rating_avg, rating_count)
+            VALUES (?, 'Иван Сафонов', 'Тестовый мастер для проверки создания гаража, расписания, заявок и отзывов.', '/images/master-ivan.jpg', 0, 0)
+            ON CONFLICT (user_id) DO UPDATE SET display_name=EXCLUDED.display_name, about=EXCLUDED.about, avatar_url=EXCLUDED.avatar_url, rating_avg=0, rating_count=0
+          `,
+          [Number(master.id)]
+        );
+      }
+      if (user) {
+        await tx.run(
+          `
+            INSERT INTO user_profiles (user_id, display_name, about, avatar_url, city, car_info, updated_at)
+            VALUES (?, 'Алексей', 'Тестовый пользователь для проверки записи к мастеру и отзывов.', '/images/master-sergey.jpg', 'Ульяновск', 'Lada Priora 2012', ?)
+            ON CONFLICT (user_id) DO UPDATE SET display_name=EXCLUDED.display_name, about=EXCLUDED.about, avatar_url=EXCLUDED.avatar_url, city=EXCLUDED.city, car_info=EXCLUDED.car_info, updated_at=EXCLUDED.updated_at
+          `,
+          [Number(user.id), now]
+        );
+      }
+
+      const resetSequences = ["garages", "availability_slots", "bookings", "reviews", "notifications", "support_tickets", "logbook_entries", "messages", "conversations"];
+      for (const table of resetSequences) {
+        await tx.run(`SELECT setval(pg_get_serial_sequence('${table}','id'), 1, false)`);
+      }
+      await tx.run("SELECT setval(pg_get_serial_sequence('users','id'), COALESCE((SELECT MAX(id) FROM users), 1), true)");
+
+      return before;
+    });
+
+    return { ok: true, removed: result, kept: keepEmails };
   });
 
   app.get("/api/admin/stats", async (req, reply) => {

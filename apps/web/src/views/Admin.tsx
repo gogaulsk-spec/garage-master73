@@ -75,6 +75,8 @@ export default function Admin() {
   const [moderating, setModerating] = useState(false);
   const [replyingTicket, setReplyingTicket] = useState<SupportTicket | null>(null);
   const [supportSaving, setSupportSaving] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
 
   async function load() {
     setErr(null);
@@ -190,6 +192,35 @@ export default function Admin() {
     }
   }
 
+
+  async function resetCleanData() {
+    setErr(null);
+    setResetNotice(null);
+    const ok = window.confirm(
+      "Очистить сайт? Будут удалены гаражи, заявки, отзывы, слоты, обращения, уведомления и лишние аккаунты. Останутся только admin@example.com, master@example.com и user@example.com."
+    );
+    if (!ok) return;
+    const ok2 = window.confirm("Точно очистить данные? Это действие нельзя отменить.");
+    if (!ok2) return;
+    setResetBusy(true);
+    try {
+      const j = await fetch("/api/admin/reset-clean", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: "RESET_GARAGE_MASTER" }),
+      }).then((r) => r.json()).catch(() => ({ ok: false, error: "Сервер не ответил" }));
+      if (!j.ok) {
+        setErr(j.error ?? "Не удалось очистить данные");
+        return;
+      }
+      const removed = j.removed || {};
+      setResetNotice(`Данные очищены. Удалено: гаражей — ${removed.garages ?? 0}, заявок — ${removed.bookings ?? 0}, отзывов — ${removed.reviews ?? 0}, лишних пользователей — ${removed.users ?? 0}. Оставлены тестовые аккаунты.`);
+      await load();
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
   const pending = garages.filter((g) => !g.is_approved && !g.moderationReason);
   const approved = garages.filter((g) => g.is_approved);
   const rejected = garages.filter((g) => !g.is_approved && !!g.moderationReason);
@@ -241,6 +272,20 @@ export default function Admin() {
                 <Stat value={Number(adminStats.avgRating ?? 0).toFixed(1)} label="Средняя оценка" />
               </div>
               <Card><CardBody className="grid gap-3 md:grid-cols-3"><MiniMetric title="Конверсия выполнения" value={`${donePercent}%`} text="Доля заявок со статусом «Выполнена»." /><MiniMetric title="Активные заявки" value={String(activeBookings.length)} text="Новые, подтверждённые и заявки в работе." /><MiniMetric title="Открытая поддержка" value={String(adminStats.openSupport ?? 0)} text="Обращения, которые требуют реакции администратора." /></CardBody></Card>
+              <Card className="border-red-400/20 bg-red-400/[.04]">
+                <CardBody className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-lg font-semibold text-zinc-50">Очистка данных перед финальным заполнением</div>
+                      <div className="mt-1 text-sm leading-6 text-zinc-400">Удаляет все гаражи, заявки, отзывы, слоты, поддержку, уведомления и лишних пользователей. Остаются только тестовые аккаунты: admin@example.com, master@example.com и user@example.com.</div>
+                    </div>
+                    <Button type="button" className="bg-red-400 text-zinc-950 shadow-none hover:bg-red-300" onClick={resetCleanData} disabled={resetBusy}>
+                      {resetBusy ? "Очищаю..." : "Очистить данные"}
+                    </Button>
+                  </div>
+                  {resetNotice ? <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">{resetNotice}</div> : null}
+                </CardBody>
+              </Card>
             </div>
           ) : null}
 
