@@ -65,6 +65,8 @@ export default function Shell({ children }: { children: ReactNode }) {
 
   useEffect(() => { loadMe(); setShowNotifications(false); }, [loc.pathname]);
 
+  const isAdmin = me?.role === "ADMIN";
+
   const nav = [
     { to: "/", label: "Главная", show: true },
     { to: "/feed", label: "Лента", show: true },
@@ -72,109 +74,221 @@ export default function Shell({ children }: { children: ReactNode }) {
     { to: "/favorites", label: "Избранное", show: true },
     { to: "/me", label: "Профиль", show: !!me },
     { to: "/support", label: "Поддержка", show: !!me },
-    { to: "/master", label: "Кабинет", show: me?.role === "MASTER" || me?.role === "ADMIN" },
-    { to: "/admin", label: "Админка", show: me?.role === "ADMIN" },
+    { to: "/master", label: "Кабинет", show: me?.role === "MASTER" },
   ].filter((item) => item.show);
 
+  const adminNav = [
+    { to: "/admin", label: "Статистика" },
+    { to: "/admin/moderation", label: "Модерация" },
+    { to: "/admin/users", label: "Пользователи" },
+    { to: "/admin/bookings", label: "Заявки" },
+    { to: "/admin/reviews", label: "Отзывы" },
+    { to: "/admin/support", label: "Поддержка" },
+  ];
+
   const bottomNav = useMemo(() => {
+    if (me?.role === "ADMIN") {
+      return [
+        { to: "/admin", label: "Стат.", icon: "▦", show: true },
+        { to: "/admin/moderation", label: "Модер.", icon: "✓", show: true },
+        { to: "/admin/bookings", label: "Заявки", icon: "●", show: true },
+        { to: "/admin/support", label: "Поддержка", icon: unreadCount > 0 ? String(Math.min(unreadCount, 9)) : "?", show: true },
+      ];
+    }
     const items = [
       { to: "/", label: "Главная", icon: "⌂", show: true },
       { to: "/search", label: "Каталог", icon: "⌕", show: true },
       { to: "/favorites", label: "Избранное", icon: "★", show: true },
       { to: me ? "/me" : "/auth/login", label: me ? "Профиль" : "Войти", icon: unreadCount > 0 ? String(Math.min(unreadCount, 9)) : "●", show: true },
-      { to: "/support", label: "Поддержка", icon: "?", show: !!me && me?.role !== "ADMIN" },
+      { to: "/support", label: "Поддержка", icon: "?", show: !!me },
       { to: "/master", label: "Мастер", icon: "⚙", show: me?.role === "MASTER" },
-      { to: "/admin", label: "Админ", icon: "✓", show: me?.role === "ADMIN" },
     ];
     return items.filter((item) => item.show);
   }, [me, unreadCount]);
 
   return (
-    <div className="min-h-screen pb-20 md:pb-0">
-      <header className="sticky top-0 z-50 border-b border-white/10 bg-zinc-950/82 backdrop-blur-xl">
-        <div className="mx-auto grid max-w-7xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3">
-          <Link to="/" className="flex min-w-0 items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-400 text-base font-black text-zinc-950 shadow-[0_14px_45px_rgba(251,191,36,0.25)]">
-              GM
-            </div>
-            <div className="hidden min-w-0 leading-tight sm:block">
-              <div className="truncate text-sm font-black uppercase tracking-[0.22em] text-zinc-50">GarageMaster</div>
-              <div className="truncate text-xs text-zinc-500">частные автомастерские Ульяновска</div>
-            </div>
-          </Link>
+    <div className="min-h-screen overflow-x-hidden pb-20 md:pb-0">
+      <header className="sticky top-0 z-50 border-b border-white/10 bg-zinc-950/88 backdrop-blur-xl">
+        {isAdmin ? (
+          <>
+            <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
+              <Link to="/admin" className="flex min-w-0 items-center gap-3">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-400 text-base font-black text-zinc-950 shadow-[0_14px_45px_rgba(251,191,36,0.22)]">
+                  GM
+                </div>
+                <div className="min-w-0 leading-tight">
+                  <div className="truncate text-sm font-black uppercase tracking-[0.2em] text-zinc-50">GarageMaster</div>
+                  <div className="hidden truncate text-xs text-amber-100/70 sm:block">админ-панель управления</div>
+                </div>
+              </Link>
 
-          <nav className="hidden min-w-0 justify-center gap-1 overflow-x-auto rounded-full border border-white/10 bg-white/[.035] p-1 lg:flex">
-            {nav.map((n) => {
-              const active = loc.pathname === n.to || (n.to !== "/" && loc.pathname.startsWith(n.to));
-              return (
+              <div className="ml-auto flex min-w-0 items-center justify-end gap-2">
                 <Link
-                  key={n.to}
-                  to={n.to}
-                  className={cn(
-                    "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/10 hover:text-zinc-50",
-                    active && "bg-amber-400 text-zinc-950 shadow-[0_10px_28px_rgba(251,191,36,0.2)] hover:bg-amber-300 hover:text-zinc-950"
-                  )}
+                  to="/search"
+                  className="hidden rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-sm font-semibold text-zinc-200 transition hover:border-amber-300/35 hover:text-amber-100 md:inline-flex"
                 >
-                  {n.label}
+                  Перейти на сайт
                 </Link>
-              );
-            })}
-          </nav>
 
-          <div className="flex shrink-0 items-center justify-end gap-2">
-            {!loading && me ? (
-              <>
-                <div className="relative hidden sm:block">
+                {!loading && me ? (
+                  <>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowNotifications((v) => !v)}
+                        className="relative inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:border-amber-300/35 hover:text-amber-100"
+                        title={me.email}
+                      >
+                        <span>🔔</span>
+                        <span className="hidden sm:inline">Уведомления</span>
+                        {unreadCount > 0 ? <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-400 px-1 text-[10px] font-black text-zinc-950">{Math.min(unreadCount, 99)}</span> : null}
+                      </button>
+                      {showNotifications ? (
+                        <div className="absolute right-0 top-12 z-[90] w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/98 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+                          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                            <div className="text-sm font-semibold text-zinc-50">Уведомления</div>
+                            <button type="button" onClick={markAllNotificationsRead} className="text-xs text-amber-200 hover:underline">Прочитать все</button>
+                          </div>
+                          <div className="max-h-96 overflow-y-auto p-2">
+                            {notifications.length === 0 ? <div className="p-4 text-sm text-zinc-500">Уведомлений пока нет.</div> : notifications.slice(0, 8).map((n) => (
+                              <Link key={n.id} to={n.link || "/admin"} className={`block rounded-2xl px-3 py-3 transition hover:bg-white/[.06] ${!n.readAt ? "bg-amber-300/10" : ""}`}>
+                                <div className="text-sm font-semibold text-zinc-100">{n.title}</div>
+                                {n.text ? <div className="mt-1 text-xs leading-5 text-zinc-500">{n.text}</div> : null}
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="hidden rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100 sm:block">
+                      Админ
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={logout}
+                      className="rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-red-300/30 hover:bg-red-300/10 hover:text-red-100"
+                    >
+                      Выйти
+                    </button>
+                  </>
+                ) : (
+                  <Link
+                    to="/auth/login"
+                    className="rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-sm font-medium text-zinc-100 transition hover:border-amber-300/35 hover:text-amber-100"
+                  >
+                    Войти
+                  </Link>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t border-white/10 bg-black/20">
+              <nav className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-4 py-2">
+                {adminNav.map((n) => {
+                  const active = loc.pathname === n.to || (n.to !== "/admin" && loc.pathname.startsWith(n.to));
+                  return (
+                    <Link
+                      key={n.to}
+                      to={n.to}
+                      className={cn(
+                        "rounded-2xl px-3 py-2 text-sm font-semibold text-zinc-300 transition hover:bg-white/10 hover:text-zinc-50",
+                        active && "bg-amber-400 text-zinc-950 shadow-[0_10px_28px_rgba(251,191,36,0.16)] hover:bg-amber-300 hover:text-zinc-950"
+                      )}
+                    >
+                      {n.label}
+                    </Link>
+                  );
+                })}
+              </nav>
+            </div>
+          </>
+        ) : (
+          <div className="mx-auto grid max-w-7xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3">
+            <Link to="/" className="flex min-w-0 items-center gap-3">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-400 text-base font-black text-zinc-950 shadow-[0_14px_45px_rgba(251,191,36,0.25)]">
+                GM
+              </div>
+              <div className="hidden min-w-0 leading-tight sm:block">
+                <div className="truncate text-sm font-black uppercase tracking-[0.22em] text-zinc-50">GarageMaster</div>
+                <div className="truncate text-xs text-zinc-500">частные автомастерские Ульяновска</div>
+              </div>
+            </Link>
+
+            <nav className="hidden min-w-0 flex-wrap justify-center gap-1 rounded-full border border-white/10 bg-white/[.035] p-1 lg:flex">
+              {nav.map((n) => {
+                const active = loc.pathname === n.to || (n.to !== "/" && loc.pathname.startsWith(n.to));
+                return (
+                  <Link
+                    key={n.to}
+                    to={n.to}
+                    className={cn(
+                      "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/10 hover:text-zinc-50",
+                      active && "bg-amber-400 text-zinc-950 shadow-[0_10px_28px_rgba(251,191,36,0.2)] hover:bg-amber-300 hover:text-zinc-950"
+                    )}
+                  >
+                    {n.label}
+                  </Link>
+                );
+              })}
+            </nav>
+
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              {!loading && me ? (
+                <>
+                  <div className="relative hidden sm:block">
+                    <button
+                      type="button"
+                      onClick={() => setShowNotifications((v) => !v)}
+                      className="relative inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-amber-300/35 hover:text-amber-100"
+                      title={me.email}
+                    >
+                      🔔 {roleLabel(me.role)}
+                      {unreadCount > 0 ? <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-400 px-1 text-[10px] font-black text-zinc-950">{Math.min(unreadCount, 99)}</span> : null}
+                    </button>
+                    {showNotifications ? (
+                      <div className="absolute right-0 top-12 z-[90] w-80 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/98 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+                        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                          <div className="text-sm font-semibold text-zinc-50">Уведомления</div>
+                          <button type="button" onClick={markAllNotificationsRead} className="text-xs text-amber-200 hover:underline">Прочитать все</button>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto p-2">
+                          {notifications.length === 0 ? <div className="p-4 text-sm text-zinc-500">Уведомлений пока нет.</div> : notifications.slice(0, 8).map((n) => (
+                            <Link key={n.id} to={n.link || "/me"} className={`block rounded-2xl px-3 py-3 transition hover:bg-white/[.06] ${!n.readAt ? "bg-amber-300/10" : ""}`}>
+                              <div className="text-sm font-semibold text-zinc-100">{n.title}</div>
+                              {n.text ? <div className="mt-1 text-xs leading-5 text-zinc-500">{n.text}</div> : null}
+                            </Link>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setShowNotifications((v) => !v)}
-                    className="relative inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-amber-300/35 hover:text-amber-100"
-                    title={me.email}
+                    onClick={logout}
+                    className="rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-sm font-medium text-zinc-100 transition hover:border-red-300/30 hover:bg-red-300/10 hover:text-red-100"
                   >
-                    🔔 {roleLabel(me.role)}
-                    {unreadCount > 0 ? <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-400 px-1 text-[10px] font-black text-zinc-950">{Math.min(unreadCount, 99)}</span> : null}
+                    Выйти
                   </button>
-                  {showNotifications ? (
-                    <div className="absolute right-0 top-12 z-[90] w-80 overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/98 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-                      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-                        <div className="text-sm font-semibold text-zinc-50">Уведомления</div>
-                        <button type="button" onClick={markAllNotificationsRead} className="text-xs text-amber-200 hover:underline">Прочитать все</button>
-                      </div>
-                      <div className="max-h-96 overflow-y-auto p-2">
-                        {notifications.length === 0 ? <div className="p-4 text-sm text-zinc-500">Уведомлений пока нет.</div> : notifications.slice(0, 8).map((n) => (
-                          <Link key={n.id} to={n.link || "/me"} className={`block rounded-2xl px-3 py-3 transition hover:bg-white/[.06] ${!n.readAt ? "bg-amber-300/10" : ""}`}>
-                            <div className="text-sm font-semibold text-zinc-100">{n.title}</div>
-                            {n.text ? <div className="mt-1 text-xs leading-5 text-zinc-500">{n.text}</div> : null}
-                          </Link>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-sm font-medium text-zinc-100 transition hover:border-red-300/30 hover:bg-red-300/10 hover:text-red-100"
+                </>
+              ) : (
+                <Link
+                  to="/auth/login"
+                  className="rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-sm font-medium text-zinc-100 transition hover:border-amber-300/35 hover:text-amber-100"
                 >
-                  Выйти
-                </button>
-              </>
-            ) : (
+                  Войти
+                </Link>
+              )}
               <Link
-                to="/auth/login"
-                className="rounded-full border border-white/10 bg-white/[.055] px-3 py-2 text-sm font-medium text-zinc-100 transition hover:border-amber-300/35 hover:text-amber-100"
+                to="/search"
+                className="hidden rounded-full bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-[0_12px_34px_rgba(251,191,36,0.18)] transition hover:-translate-y-0.5 hover:bg-amber-300 xl:inline-flex"
               >
-                Войти
+                Найти мастера
               </Link>
-            )}
-            <Link
-              to="/search"
-              className="hidden rounded-full bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-[0_12px_34px_rgba(251,191,36,0.18)] transition hover:-translate-y-0.5 hover:bg-amber-300 xl:inline-flex"
-            >
-              Найти мастера
-            </Link>
+            </div>
           </div>
-        </div>
+        )}
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">{children}</main>
@@ -193,7 +307,7 @@ export default function Shell({ children }: { children: ReactNode }) {
       <nav className="fixed inset-x-0 bottom-0 z-[70] border-t border-white/10 bg-zinc-950/90 px-2 pb-[calc(env(safe-area-inset-bottom)+8px)] pt-2 shadow-[0_-18px_45px_rgba(0,0,0,0.35)] backdrop-blur-xl md:hidden">
         <div className="mx-auto grid max-w-lg gap-1" style={{ gridTemplateColumns: `repeat(${bottomNav.length}, minmax(0, 1fr))` }}>
           {bottomNav.map((n) => {
-            const active = loc.pathname === n.to || (n.to !== "/" && loc.pathname.startsWith(n.to));
+            const active = n.to === "/admin" ? loc.pathname === "/admin" : loc.pathname === n.to || (n.to !== "/" && loc.pathname.startsWith(n.to));
             return (
               <Link
                 key={`${n.to}-${n.label}`}
@@ -203,7 +317,7 @@ export default function Shell({ children }: { children: ReactNode }) {
                   active && "bg-amber-300/10 text-amber-100 ring-1 ring-amber-300/20"
                 )}
               >
-                <span className={cn("grid h-5 min-w-5 place-items-center rounded-full text-lg leading-none", n.to === "/me" && unreadCount > 0 && "bg-amber-400 px-1 text-[10px] font-black text-zinc-950")}>{n.icon}</span>
+                <span className={cn("grid h-5 min-w-5 place-items-center rounded-full text-lg leading-none", (n.to === "/me" || n.to === "/admin/support") && unreadCount > 0 && "bg-amber-400 px-1 text-[10px] font-black text-zinc-950")}>{n.icon}</span>
                 <span className="mt-1 max-w-full truncate">{n.label}</span>
               </Link>
             );
