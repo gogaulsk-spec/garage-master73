@@ -597,6 +597,35 @@ export function registerGarageRoutes(app: FastifyInstance) {
     return { ok: true, garages: rows };
   });
 
+  app.delete("/api/admin/garages/:id", async (req, reply) => {
+    const auth = await requireAuth(req, reply);
+    if (!auth) return;
+    if (auth.role !== "ADMIN") return reply.code(403).send({ ok: false, error: "Только для администратора" });
+
+    const id = Number((req.params as any).id);
+    const garage = await app.db.get<any>("SELECT id, title, master_user_id FROM garages WHERE id=?", [id]);
+    if (!garage) return reply.code(404).send({ ok: false, error: "Гараж не найден" });
+
+    await app.db.transaction(async (tx) => {
+      await tx.run("DELETE FROM messages WHERE conversation_id IN (SELECT c.id FROM conversations c JOIN bookings b ON b.id=c.booking_id WHERE b.garage_id=?)", [id]);
+      await tx.run("DELETE FROM conversations WHERE booking_id IN (SELECT id FROM bookings WHERE garage_id=?)", [id]);
+      await tx.run("DELETE FROM logbook_entries WHERE booking_id IN (SELECT id FROM bookings WHERE garage_id=?)", [id]);
+      await tx.run("DELETE FROM review_replies WHERE review_id IN (SELECT id FROM reviews WHERE garage_id=?)", [id]);
+      await tx.run("DELETE FROM reviews WHERE garage_id=?", [id]);
+      await tx.run("DELETE FROM favorite_garages WHERE garage_id=?", [id]);
+      await tx.run("DELETE FROM bookings WHERE garage_id=?", [id]);
+      await tx.run("DELETE FROM availability_slots WHERE garage_id=?", [id]);
+      await tx.run("DELETE FROM garage_services WHERE garage_id=?", [id]);
+      await tx.run("DELETE FROM garages WHERE id=?", [id]);
+    });
+
+    if (garage.master_user_id) {
+      await createNotification(app.db, Number(garage.master_user_id), "MODERATION", "Карточка удалена", `Администратор удалил карточку «${garage.title}».`, "/master");
+    }
+
+    return { ok: true };
+  });
+
   app.patch("/api/admin/garages/:id/moderation", async (req, reply) => {
     const auth = await requireAuth(req, reply);
     if (!auth) return;

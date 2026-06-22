@@ -401,6 +401,47 @@ export function registerBookingRoutes(app: FastifyInstance) {
     return { ok: true, users: rows };
   });
 
+  app.delete("/api/admin/users/:id", async (req, reply) => {
+    const auth = await requireAuth(req, reply);
+    if (!auth) return;
+    if (auth.role !== "ADMIN") return reply.code(403).send({ ok: false, error: "Только для администратора" });
+
+    const id = z.coerce.number().int().positive().parse((req.params as any).id);
+    if (id === Number(auth.sub)) return reply.code(400).send({ ok: false, error: "Нельзя удалить текущий аккаунт администратора" });
+
+    const user = await app.db.get<any>("SELECT id, role, email FROM users WHERE id=?", [id]);
+    if (!user) return reply.code(404).send({ ok: false, error: "Пользователь не найден" });
+    if (user.role === "ADMIN") return reply.code(400).send({ ok: false, error: "Администраторов нельзя удалять из интерфейса" });
+
+    const result = await app.db.transaction(async (tx) => {
+      const counts = {
+        garages: Number((await tx.get<{ c: string | number }>("SELECT COUNT(1) as c FROM garages WHERE master_user_id=?", [id]))?.c ?? 0),
+        bookings: Number((await tx.get<{ c: string | number }>("SELECT COUNT(1) as c FROM bookings b WHERE b.user_id=? OR b.garage_id IN (SELECT id FROM garages WHERE master_user_id=?)", [id, id]))?.c ?? 0),
+        reviews: Number((await tx.get<{ c: string | number }>("SELECT COUNT(1) as c FROM reviews r WHERE r.user_id=? OR r.garage_id IN (SELECT id FROM garages WHERE master_user_id=?)", [id, id]))?.c ?? 0),
+      };
+
+      await tx.run("DELETE FROM messages WHERE from_user_id=? OR conversation_id IN (SELECT c.id FROM conversations c JOIN bookings b ON b.id=c.booking_id WHERE b.user_id=? OR b.garage_id IN (SELECT id FROM garages WHERE master_user_id=?))", [id, id, id]);
+      await tx.run("DELETE FROM conversations WHERE booking_id IN (SELECT b.id FROM bookings b WHERE b.user_id=? OR b.garage_id IN (SELECT id FROM garages WHERE master_user_id=?))", [id, id]);
+      await tx.run("DELETE FROM logbook_entries WHERE user_id=? OR booking_id IN (SELECT b.id FROM bookings b WHERE b.user_id=? OR b.garage_id IN (SELECT id FROM garages WHERE master_user_id=?))", [id, id, id]);
+      await tx.run("DELETE FROM review_replies WHERE master_user_id=? OR review_id IN (SELECT r.id FROM reviews r WHERE r.user_id=? OR r.garage_id IN (SELECT id FROM garages WHERE master_user_id=?))", [id, id, id]);
+      await tx.run("DELETE FROM reviews WHERE user_id=? OR garage_id IN (SELECT id FROM garages WHERE master_user_id=?)", [id, id]);
+      await tx.run("DELETE FROM favorite_garages WHERE user_id=? OR garage_id IN (SELECT id FROM garages WHERE master_user_id=?)", [id, id]);
+      await tx.run("DELETE FROM notifications WHERE user_id=?", [id]);
+      await tx.run("DELETE FROM support_tickets WHERE user_id=?", [id]);
+      await tx.run("DELETE FROM bookings WHERE user_id=? OR garage_id IN (SELECT id FROM garages WHERE master_user_id=?)", [id, id]);
+      await tx.run("DELETE FROM availability_slots WHERE garage_id IN (SELECT id FROM garages WHERE master_user_id=?)", [id]);
+      await tx.run("DELETE FROM garage_services WHERE garage_id IN (SELECT id FROM garages WHERE master_user_id=?)", [id]);
+      await tx.run("DELETE FROM garages WHERE master_user_id=?", [id]);
+      await tx.run("DELETE FROM master_profiles WHERE user_id=?", [id]);
+      await tx.run("DELETE FROM user_profiles WHERE user_id=?", [id]);
+      await tx.run("DELETE FROM users WHERE id=?", [id]);
+
+      return counts;
+    });
+
+    return { ok: true, removed: result, deletedUser: { id, email: user.email, role: user.role } };
+  });
+
   app.get("/api/admin/reviews", async (req, reply) => {
     const auth = await requireAuth(req, reply);
     if (!auth) return;

@@ -77,6 +77,7 @@ export default function Admin() {
   const [supportSaving, setSupportSaving] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetNotice, setResetNotice] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   async function load() {
     setErr(null);
@@ -221,6 +222,49 @@ export default function Admin() {
     }
   }
 
+  async function deleteGarage(garage: Garage) {
+    setErr(null);
+    const ok = window.confirm(`Удалить гараж «${garage.title}»? Вместе с ним удалятся слоты, заявки, отзывы, избранное и услуги этой карточки.`);
+    if (!ok) return;
+    const ok2 = window.confirm("Точно удалить карточку гаража? Это действие нельзя отменить.");
+    if (!ok2) return;
+    setDeleting(`garage-${garage.id}`);
+    try {
+      const j = await fetch(`/api/admin/garages/${garage.id}`, { method: "DELETE" }).then((r) => r.json()).catch(() => ({ ok: false, error: "Сервер не ответил" }));
+      if (!j.ok) {
+        setErr(j.error ?? "Не удалось удалить гараж");
+        return;
+      }
+      await load();
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  async function deleteUser(user: AdminUser) {
+    setErr(null);
+    if (user.role === "ADMIN") {
+      setErr("Администратора нельзя удалить из интерфейса.");
+      return;
+    }
+    const title = user.displayName || user.email || `пользователя #${user.id}`;
+    const ok = window.confirm(`Удалить ${roleText[user.role] || "пользователя"} «${title}»? Вместе с аккаунтом удалятся связанные гаражи, заявки, отзывы, поддержка и уведомления.`);
+    if (!ok) return;
+    const ok2 = window.confirm("Точно удалить пользователя? Это действие нельзя отменить.");
+    if (!ok2) return;
+    setDeleting(`user-${user.id}`);
+    try {
+      const j = await fetch(`/api/admin/users/${user.id}`, { method: "DELETE" }).then((r) => r.json()).catch(() => ({ ok: false, error: "Сервер не ответил" }));
+      if (!j.ok) {
+        setErr(j.error ?? "Не удалось удалить пользователя");
+        return;
+      }
+      await load();
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   const pending = garages.filter((g) => !g.is_approved && !g.moderationReason);
   const approved = garages.filter((g) => g.is_approved);
   const rejected = garages.filter((g) => !g.is_approved && !!g.moderationReason);
@@ -292,18 +336,18 @@ export default function Admin() {
           {activeTab === "moderation" ? (
             <div className="space-y-5">
               <AdminSection title="Ожидают проверки" empty="Новых карточек на проверку нет.">
-                {pending.map((g) => <AdminCard key={g.id} garage={g} onApprove={() => moderate(g.id, 1)} onReject={() => openReject(g)} />)}
+                {pending.map((g) => <AdminCard key={g.id} garage={g} deleting={deleting === `garage-${g.id}`} onApprove={() => moderate(g.id, 1)} onReject={() => openReject(g)} onDelete={() => deleteGarage(g)} />)}
               </AdminSection>
               <AdminSection title="Отклонённые карточки" empty="Отклонённых карточек нет.">
-                {rejected.map((g) => <AdminCard key={g.id} garage={g} onApprove={() => moderate(g.id, 1)} onReject={() => openReject(g)} />)}
+                {rejected.map((g) => <AdminCard key={g.id} garage={g} deleting={deleting === `garage-${g.id}`} onApprove={() => moderate(g.id, 1)} onReject={() => openReject(g)} onDelete={() => deleteGarage(g)} />)}
               </AdminSection>
               <AdminSection title="Опубликованные гаражи" empty="Опубликованных карточек пока нет.">
-                {approved.map((g) => <AdminCard key={g.id} garage={g} onApprove={() => moderate(g.id, 1)} onReject={() => openReject(g)} />)}
+                {approved.map((g) => <AdminCard key={g.id} garage={g} deleting={deleting === `garage-${g.id}`} onApprove={() => moderate(g.id, 1)} onReject={() => openReject(g)} onDelete={() => deleteGarage(g)} />)}
               </AdminSection>
             </div>
           ) : null}
 
-          {activeTab === "users" ? <Card><CardBody className="space-y-3"><div className="text-xl font-semibold text-zinc-50">Пользователи и мастера</div>{users.length === 0 ? <Empty text="Пользователей пока нет." /> : <div className="space-y-2">{users.map((u) => <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[.04] p-3"><div className="flex items-center gap-3">{u.avatarUrl ? <img src={u.avatarUrl} alt={u.displayName || u.email || "Пользователь"} className="h-10 w-10 rounded-2xl object-cover" /> : <div className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-xs font-black text-zinc-300">GM</div>}<div><div className="text-sm font-semibold text-zinc-100">{u.displayName || u.email || `Пользователь #${u.id}`}</div><div className="text-xs text-zinc-500">{u.email || u.phone || "—"} • {u.city || "город не указан"}</div></div></div><Badge>{roleText[u.role] || u.role}</Badge></div>)}</div>}</CardBody></Card> : null}
+          {activeTab === "users" ? <Card><CardBody className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-xl font-semibold text-zinc-50">Пользователи и мастера</div><div className="mt-1 text-sm text-zinc-500">Админ может удалить лишних клиентов и мастеров. Администраторы защищены от удаления.</div></div><Badge>{users.length} всего</Badge></div>{users.length === 0 ? <Empty text="Пользователей пока нет." /> : <div className="space-y-2">{users.map((u) => <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[.04] p-3"><div className="flex min-w-0 items-center gap-3">{u.avatarUrl ? <img src={u.avatarUrl} alt={u.displayName || u.email || "Пользователь"} className="h-10 w-10 rounded-2xl object-cover" /> : <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/10 text-xs font-black text-zinc-300">GM</div>}<div className="min-w-0"><div className="truncate text-sm font-semibold text-zinc-100">{u.displayName || u.email || `Пользователь #${u.id}`}</div><div className="truncate text-xs text-zinc-500">{u.email || u.phone || "—"} • {u.city || "город не указан"}</div></div></div><div className="flex flex-wrap items-center gap-2"><Badge>{roleText[u.role] || u.role}</Badge><Button type="button" className="bg-red-400/90 text-zinc-950 shadow-none hover:bg-red-300 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-zinc-500" onClick={() => deleteUser(u)} disabled={u.role === "ADMIN" || deleting === `user-${u.id}`}>{deleting === `user-${u.id}` ? "Удаляю..." : u.role === "ADMIN" ? "Защищён" : "Удалить"}</Button></div></div>)}</div>}</CardBody></Card> : null}
 
           {activeTab === "bookings" ? <Card><CardBody className="space-y-3"><div className="text-xl font-semibold text-zinc-50">Все заявки</div>{bookings.length === 0 ? <Empty text="Заявок пока нет." /> : <div className="space-y-2">{bookings.map((b) => <div key={b.id} className="rounded-2xl border border-white/10 bg-white/[.04] p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold text-zinc-100">#{b.id} • {b.serviceName}</div><div className="text-xs text-zinc-500">{bookingTime(b.slotStart, b.slotEnd)}</div><div className="text-xs text-zinc-500">{b.garageTitle} • мастер: {b.masterName || "—"} • клиент: {b.userDisplayName || b.userEmail || "—"}</div>{b.cancelReason ? <div className="mt-2 text-xs text-red-200">Причина отмены: {b.cancelReason}</div> : null}</div><Badge className={statusClass(b.status)}>{statusText[b.status] || b.status}</Badge></div></div>)}</div>}</CardBody></Card> : null}
 
@@ -411,7 +455,7 @@ function AdminSection({ title, empty, children }: { title: string; empty: string
   return <div className="space-y-3"><div className="text-xl font-semibold text-zinc-50">{title}</div>{items.length === 0 ? <Card><CardBody><Empty text={empty} /></CardBody></Card> : <div className="grid gap-4 md:grid-cols-2">{items}</div>}</div>;
 }
 
-function AdminCard({ garage, onApprove, onReject }: { garage: Garage; onApprove: () => void; onReject: () => void }) {
+function AdminCard({ garage, deleting, onApprove, onReject, onDelete }: { garage: Garage; deleting?: boolean; onApprove: () => void; onReject: () => void; onDelete: () => void }) {
   const rejected = !garage.is_approved && !!garage.moderationReason;
   return (
     <Card className="overflow-hidden">
@@ -429,7 +473,7 @@ function AdminCard({ garage, onApprove, onReject }: { garage: Garage; onApprove:
           <div className="text-sm leading-6 text-zinc-400 line-clamp-3">{garage.description}</div>
           {garage.moderationReason ? <div className="rounded-2xl border border-red-400/15 bg-red-400/10 px-3 py-2 text-xs leading-5 text-red-100"><span className="font-semibold">Причина:</span> {garage.moderationReason}</div> : null}
           <div className="flex flex-wrap gap-2">{(garage.servicesList ?? []).slice(0, 4).map((s) => <Badge key={s}>{s}</Badge>)}</div>
-          <div className="flex flex-wrap gap-2 pt-1"><Button onClick={onApprove} disabled={!!garage.is_approved}>Опубликовать</Button><Button className="bg-white/10 text-zinc-50 shadow-none" onClick={onReject}>{garage.is_approved ? "Снять с публикации" : "Отклонить"}</Button><Link to={`/garage/${garage.id}`} className="rounded-2xl border border-white/10 bg-white/[.04] px-4 py-2 text-sm font-semibold text-zinc-100">Открыть</Link></div>
+          <div className="flex flex-wrap gap-2 pt-1"><Button onClick={onApprove} disabled={!!garage.is_approved}>Опубликовать</Button><Button className="bg-white/10 text-zinc-50 shadow-none" onClick={onReject}>{garage.is_approved ? "Снять с публикации" : "Отклонить"}</Button><Button type="button" className="bg-red-400/90 text-zinc-950 shadow-none hover:bg-red-300" onClick={onDelete} disabled={!!deleting}>{deleting ? "Удаляю..." : "Удалить"}</Button><Link to={`/garage/${garage.id}`} className="rounded-2xl border border-white/10 bg-white/[.04] px-4 py-2 text-sm font-semibold text-zinc-100">Открыть</Link></div>
         </CardBody>
       </div>
     </Card>
